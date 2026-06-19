@@ -62,8 +62,8 @@ func TestAppForPushUsesDefaultBranch(t *testing.T) {
 		},
 	}
 
-	app, branch, reason := config.AppForPush(payload)
-	if app == nil {
+	apps, branch, reason := config.AppsForPush(payload)
+	if len(apps) == 0 {
 		t.Fatalf("expected app, got reason %q", reason)
 	}
 	if branch != "main" {
@@ -81,8 +81,8 @@ func TestAppForPushRequiresDefaultBranchWhenAppBranchUnset(t *testing.T) {
 		},
 	}
 
-	app, branch, reason := config.AppForPush(payload)
-	if app != nil {
+	apps, branch, reason := config.AppsForPush(payload)
+	if len(apps) != 0 {
 		t.Fatalf("did not expect app for branch %s", branch)
 	}
 	if branch != "feature" {
@@ -343,5 +343,73 @@ func TestNormalizeRejectsInvalidDeployTimeout(t *testing.T) {
 				t.Fatalf("expected %q error, got %v", test.want, err)
 			}
 		})
+	}
+}
+
+func TestAppsForPushMonorepo(t *testing.T) {
+	config := &Config{
+		Apps: []AppConfig{
+			{
+				Repo:       "acme/monorepo",
+				Name:       "app1",
+				Branch:     "main",
+				WatchPaths: []string{"apps/app1/**"},
+			},
+			{
+				Repo:       "acme/monorepo",
+				Name:       "app2",
+				Branch:     "main",
+				WatchPaths: []string{"apps/app2/**"},
+			},
+			{
+				Repo:      "acme/monorepo",
+				Name:      "app3",
+				Branch:    "main",
+				StaticDir: "public",
+			},
+		},
+	}
+
+	payload := &PushPayload{
+		Ref:   "refs/heads/main",
+		After: "abc123",
+		Repository: Repo{
+			FullName:      "acme/monorepo",
+			DefaultBranch: "main",
+		},
+	}
+
+	apps, branch, reason := config.AppsForPush(payload)
+	if len(apps) != 3 {
+		t.Fatalf("expected 3 apps, got %d (reason: %s)", len(apps), reason)
+	}
+	if branch != "main" {
+		t.Fatalf("unexpected branch: %s", branch)
+	}
+}
+
+func TestMatchPath(t *testing.T) {
+	tests := []struct {
+		pattern string
+		file    string
+		want    bool
+	}{
+		{"apps/app1/**", "apps/app1/index.html", true},
+		{"apps/app1/**", "apps/app1", true},
+		{"apps/app1/**", "apps/app1/", true},
+		{"apps/app1/**", "apps/app2/index.html", false},
+		{"apps/app1/", "apps/app1/index.html", true},
+		{"apps/app1/", "apps/app2", false},
+		{"*", "apps/app1", true},
+		{"**", "apps/app1", true},
+		{"apps/app1/index.html", "apps/app1/index.html", true},
+		{"apps/app1/index.html", "apps/app1/index2.html", false},
+	}
+
+	for _, test := range tests {
+		got := matchPath(test.pattern, test.file)
+		if got != test.want {
+			t.Errorf("matchPath(%q, %q) = %v, want %v", test.pattern, test.file, got, test.want)
+		}
 	}
 }
