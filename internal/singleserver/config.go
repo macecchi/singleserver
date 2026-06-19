@@ -29,6 +29,7 @@ type AppConfig struct {
 	RepoDir         string         `yaml:"path"`
 	Healthcheck     string         `yaml:"healthcheck"`
 	Hosts           []string       `yaml:"hosts"`
+	Tunnel          string         `yaml:"tunnel,omitempty"`
 	AppPort         int            `yaml:"app_port"`
 	AppPortSet      bool           `yaml:"-"`
 	HealthcheckPath string         `yaml:"healthcheck_path"`
@@ -106,6 +107,26 @@ func (a *AppConfig) Normalize() error {
 	}
 	if a.AppPort < 1 || a.AppPort > 65535 {
 		return fmt.Errorf("invalid app_port for %s: %d", a.Repo, a.AppPort)
+	}
+
+	a.Tunnel = strings.ToLower(strings.TrimSpace(a.Tunnel))
+	if a.Tunnel == "" {
+		hasTSHost := false
+		for _, host := range a.Hosts {
+			if strings.HasSuffix(strings.ToLower(strings.TrimSpace(host)), ".ts.net") {
+				hasTSHost = true
+				break
+			}
+		}
+		if hasTSHost {
+			a.Tunnel = "private"
+		} else {
+			a.Tunnel = "public"
+		}
+	}
+
+	if a.Tunnel == "private" && len(a.Hosts) > 1 {
+		return fmt.Errorf("private tailscale tunnel for %s supports at most one domain: %v", a.Repo, a.Hosts)
 	}
 
 	hosts := make([]string, 0, len(a.Hosts))

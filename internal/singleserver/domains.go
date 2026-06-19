@@ -142,12 +142,12 @@ func updateDomain(appName string, host string, add bool, w io.Writer) (*AppConfi
 	}
 	app = &config.Apps[appIndex]
 
-	if err := syncCloudflareAppDomainFunc(host, add, w); err != nil {
+	if err := syncAppDomainFunc(*app, host, add, w); err != nil {
 		return nil, err
 	}
 	if err := writeConfig(configPath, config); err != nil {
-		if rollbackErr := syncCloudflareAppDomainFunc(host, !add, io.Discard); rollbackErr != nil {
-			return nil, fmt.Errorf("%w; rollback cloudflare domain failed: %v", err, rollbackErr)
+		if rollbackErr := syncAppDomainFunc(*app, host, !add, io.Discard); rollbackErr != nil {
+			return nil, fmt.Errorf("%w; rollback domain failed: %v", err, rollbackErr)
 		}
 		return nil, err
 	}
@@ -191,6 +191,11 @@ func listDomains(args []string, w io.Writer) error {
 			continue
 		}
 		for _, host := range app.Hosts {
+			if app.Tunnel == "private" && !strings.Contains(host, ".") {
+				if domain := tailnetDomain(); domain != "" {
+					host = host + "." + domain
+				}
+			}
 			fmt.Fprintf(w, "%s\t%s\n", app.Name, host)
 		}
 	}
@@ -239,6 +244,18 @@ func verifyDomains(args []string, w io.Writer) error {
 	verifyResolverDNS := cloudflareClient == nil
 	for _, app := range apps {
 		for _, host := range app.Hosts {
+			if app.Tunnel == "private" {
+				if !strings.Contains(host, ".") {
+					if domain := tailnetDomain(); domain != "" {
+						host = host + "." + domain
+					}
+				}
+				if verifyResolverDNS && !doctorHostResolves(w, app.Name, "dns", host) {
+					failed = true
+				}
+				continue
+			}
+
 			if verifyResolverDNS && !doctorHostResolves(w, app.Name, "dns", host) {
 				failed = true
 			}
