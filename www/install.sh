@@ -329,12 +329,18 @@ install_binary() {
   channel="${SINGLESERVER_CHANNEL:-stable}"
   tmp_bin="/tmp/singleserver-linux-${binary_arch}"
 
-  if [ -n "${SINGLESERVER_DOWNLOAD_BASE_URL:-}" ]; then
+  if [ -f "/tmp/singleserver" ]; then
+    echo "Using local binary /tmp/singleserver"
+    cp /tmp/singleserver "$tmp_bin"
+  elif [ -f "/tmp/singleserver-linux-${binary_arch}" ]; then
+    echo "Using local binary /tmp/singleserver-linux-${binary_arch}"
+    cp "/tmp/singleserver-linux-${binary_arch}" "$tmp_bin"
+  elif [ -n "${SINGLESERVER_DOWNLOAD_BASE_URL:-}" ]; then
     curl -fsSL "${SINGLESERVER_DOWNLOAD_BASE_URL%/}/bin/singleserver-linux-${binary_arch}" -o "$tmp_bin"
   elif [ "$channel" = "edge" ]; then
     curl -fsSL "https://singleserver.com/bin/singleserver-linux-${binary_arch}" -o "$tmp_bin"
   else
-    release_url="https://github.com/dvassallo/singleserver/releases/latest/download"
+    release_url="https://github.com/macecchi/singleserver/releases/latest/download"
     tmp_sums="/tmp/singleserver-checksums.txt"
     curl -fsSL "${release_url}/singleserver-linux-${binary_arch}" -o "$tmp_bin"
     curl -fsSL "${release_url}/checksums.txt" -o "$tmp_sums"

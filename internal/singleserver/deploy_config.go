@@ -3,6 +3,7 @@ package singleserver
 import (
 	"bytes"
 	"runtime"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -105,7 +106,18 @@ func GeneratedDeployYAML(app AppConfig) ([]byte, error) {
 			Context: ".",
 		},
 		Proxy: kamalProxy{
-			Hosts:          app.Hosts,
+			Hosts: func() []string {
+				hosts := make([]string, len(app.Hosts))
+				for i, host := range app.Hosts {
+					if app.Tunnel == "private" && !strings.Contains(host, ".") {
+						if domain := tailnetDomain(); domain != "" {
+							host = host + "." + domain
+						}
+					}
+					hosts[i] = host
+				}
+				return hosts
+			}(),
 			AppPort:        app.AppPort,
 			SSL:            false,
 			ForwardHeaders: true,

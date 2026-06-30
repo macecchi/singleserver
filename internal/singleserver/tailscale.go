@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 type TailscaleState struct {
 	Hostname  string `json:"hostname"`
 	FunnelURL string `json:"funnel_url"`
+	AuthKey   string `json:"auth_key,omitempty"`
 }
 
 type tailscaleSelf struct {
@@ -95,7 +97,7 @@ func cliTailscaleConnect(args []string, w io.Writer) error {
 	writeCheck(w, "tailscale", "funnel", "starting", "127.0.0.1:"+port)
 	if err := commandRunToWriterFunc(w, 45*time.Second, "tailscale", "funnel", "--bg", "--yes", port); err != nil {
 		writeCheck(w, "tailscale", "funnel", "pending", err.Error())
-		return writeTailscaleStateFromStatus(status, "")
+		return writeTailscaleStateFromStatus(status, "", *authKey)
 	}
 	status, err = currentTailscaleStatus()
 	if err != nil {
@@ -104,9 +106,9 @@ func cliTailscaleConnect(args []string, w io.Writer) error {
 	funnelURL := tailscaleFunnelURL(status)
 	if funnelURL == "" {
 		writeCheck(w, "tailscale", "funnel", "pending", "-", "could not determine Funnel URL from tailscale status")
-		return writeTailscaleStateFromStatus(status, "")
+		return writeTailscaleStateFromStatus(status, "", *authKey)
 	}
-	if err := writeTailscaleStateFromStatus(status, funnelURL); err != nil {
+	if err := writeTailscaleStateFromStatus(status, funnelURL, *authKey); err != nil {
 		return err
 	}
 	env, err := loadServiceEnv()
@@ -198,10 +200,15 @@ func tailscaleFunnelURL(status *tailscaleStatus) string {
 	return "https://" + host
 }
 
-func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string) error {
+func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string, authKey string) error {
+	existing, _ := loadTailscaleState()
+	if authKey == "" && existing != nil {
+		authKey = existing.AuthKey
+	}
 	state := &TailscaleState{
 		Hostname:  tailscaleStatusName(status),
 		FunnelURL: strings.TrimRight(funnelURL, "/"),
+		AuthKey:   authKey,
 	}
 	return writeTailscaleState(state)
 }
@@ -340,4 +347,135 @@ func reportTailscaleKeyExpiry(w io.Writer, status *tailscaleStatus) {
 	}
 	writeCheck(w, "tailscale", "key expiry", "pending",
 		fmt.Sprintf("expires %s (%dd)", expiry.Format("2006-01-02"), days), detail)
+}
+
+func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Writer) error {
+	if !strings.Contains(hostname, ".") {
+		if domain := tailnetDomain(); domain != "" {
+			hostname = hostname + "." + domain
+		}
+	}
+	state, err := loadTailscaleState()
+	if err != nil {
+		return err
+	}
+	authKey := state.AuthKey
+	if authKey == "" {
+		authKey = defaultTailscaleAuthKey()
+	}
+	if authKey == "" && add {
+		return errors.New("Tailscale auth key is required to configure private tunnels; run `singleserver connect tailscale --auth-key <key>` first or set TAILSCALE_AUTHKEY in singleserver.env")
+	}
+
+	appNodeName := "singleserver-" + app.Name
+	socketPath := fmt.Sprintf("/run/tailscaled-%s.sock", app.Name)
+	stateDir := fmt.Sprintf("/var/lib/tailscale/tailscaled-%s", app.Name)
+
+	if add {
+		// 1. Ensure systemd template service exists
+		if err := ensureTailscaleTemplateService(); err != nil {
+			return err
+		}
+
+		// 2. Ensure statedir exists
+		if err := os.MkdirAll(stateDir, 0700); err != nil {
+			return err
+		}
+
+		// 3. Start the service for this app
+		serviceName := fmt.Sprintf("tailscaled-app@%s.service", app.Name)
+		writeCheck(w, app.Name, "tailscale_service", "starting", serviceName)
+		if err := commandRunFunc(15*time.Second, "systemctl", "enable", "--now", serviceName); err != nil {
+			return err
+		}
+
+		// Wait a second for tailscaled socket to appear
+		time.Sleep(1 * time.Second)
+
+		// 4. Authenticate the node
+		writeCheck(w, app.Name, "tailscale_up", "authenticating", appNodeName)
+		upArgs := []string{
+			"--socket=" + socketPath,
+			"up",
+			"--ssh",
+			"--auth-key=" + authKey,
+			"--hostname=" + appNodeName,
+		}
+		if err := commandRunFunc(2*time.Minute, "tailscale", upArgs...); err != nil {
+			return fmt.Errorf("failed to tailscale up for %s: %w", app.Name, err)
+		}
+
+		// 5. Run serve
+		writeCheck(w, app.Name, "tailscale_serve", "configuring", "target=127.0.0.1:80")
+		serveArgs := []string{
+			"--socket=" + socketPath,
+			"serve",
+			"--bg",
+			"--yes",
+			"http://127.0.0.1:80",
+		}
+		if err := commandRunFunc(30*time.Second, "tailscale", serveArgs...); err != nil {
+			return fmt.Errorf("failed to tailscale serve for %s: %w", app.Name, err)
+		}
+
+		writeCheck(w, app.Name, "tailscale_tunnel", "ok", hostname)
+	} else {
+		// Stop and disable service
+		serviceName := fmt.Sprintf("tailscaled-app@%s.service", app.Name)
+		writeCheck(w, app.Name, "tailscale_service", "stopping", serviceName)
+		_ = commandRunFunc(15*time.Second, "systemctl", "disable", "--now", serviceName)
+
+		// Remove statedir
+		_ = os.RemoveAll(stateDir)
+		_ = os.Remove(socketPath)
+
+		writeCheck(w, app.Name, "tailscale_tunnel", "ok", "removed")
+	}
+
+	return nil
+}
+
+func tailnetDomain() string {
+	state, err := loadTailscaleState()
+	if err != nil || state.Hostname == "" {
+		return ""
+	}
+	return tailnetDomainFromHostname(state.Hostname)
+}
+
+func tailnetDomainFromHostname(hostname string) string {
+	parts := strings.Split(hostname, ".")
+	if len(parts) >= 3 && parts[len(parts)-2] == "ts" && parts[len(parts)-1] == "net" {
+		return strings.Join(parts[1:], ".")
+	}
+	return ""
+}
+
+func ensureTailscaleTemplateService() error {
+	path := "/etc/systemd/system/tailscaled-app@.service"
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	tailscaledPath, err := exec.LookPath("tailscaled")
+	if err != nil {
+		tailscaledPath = "/usr/sbin/tailscaled"
+	}
+	body := fmt.Sprintf(`[Unit]
+Description=Tailscale node for Single Server App %%i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%s --socket=/run/tailscaled-%%i.sock --statedir=/var/lib/tailscale/tailscaled-%%i --port=0 --tun=userspace-networking
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+`, tailscaledPath)
+	if err := os.MkdirAll("/etc/systemd/system", 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(body), 0644)
 }

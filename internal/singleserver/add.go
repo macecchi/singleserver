@@ -28,6 +28,7 @@ type addOptions struct {
 	name           string
 	hosts          []string
 	env            map[string]string
+	tunnel         string
 	noDeploy       bool
 	nonInteractive bool
 	hostsSet       bool
@@ -84,6 +85,7 @@ type addAppEntry struct {
 	branch          string
 	repoDir         string
 	hosts           []string
+	tunnel          string
 	healthcheck     string
 	healthcheckPath string
 	runtime         string
@@ -195,9 +197,9 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 
 	syncedHosts := []string{}
 	for _, host := range app.Hosts {
-		if err := syncCloudflareAppDomainFunc(host, true, w); err != nil {
+		if err := syncAppDomainFunc(app, host, true, w); err != nil {
 			for _, syncedHost := range syncedHosts {
-				_ = syncCloudflareAppDomainFunc(syncedHost, false, io.Discard)
+				_ = syncAppDomainFunc(app, syncedHost, false, io.Discard)
 			}
 			return err
 		}
@@ -206,7 +208,7 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 
 	if err := writeFileAtomic(configPath, updated); err != nil {
 		for _, syncedHost := range syncedHosts {
-			_ = syncCloudflareAppDomainFunc(syncedHost, false, io.Discard)
+			_ = syncAppDomainFunc(app, syncedHost, false, io.Discard)
 		}
 		return err
 	}
@@ -264,6 +266,7 @@ func parseAddArgs(args []string, w io.Writer) (addOptions, error) {
 	fs.Var((*stringListFlag)(&opts.hosts), "domain", "app domain")
 	opts.env = map[string]string{}
 	fs.Var(envMapFlag(opts.env), "env", "environment variable KEY=value (repeatable)")
+	fs.StringVar(&opts.tunnel, "tunnel", "", "tunnel type: public (default) or private")
 	fs.BoolVar(&opts.noDeploy, "no-deploy", false, "configure without deploying immediately")
 
 	appPort := bindAppSettingsFlags(fs, &opts.appSettings)
@@ -328,8 +331,20 @@ func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addProm
 		}
 	}
 
+	if opts.tunnel == "" {
+		tunnel, err := p.askChoice("Tunnel type", []string{"public", "private"})
+		if err != nil {
+			return addOptions{}, err
+		}
+		opts.tunnel = tunnel
+	}
+
 	if len(opts.hosts) == 0 {
-		value, err := p.askOptional("App domain (optional)")
+		label := "App domain (optional)"
+		if opts.tunnel == "private" {
+			label = "Tailscale private domain (e.g. scoreboard.ts.net, optional)"
+		}
+		value, err := p.askOptional(label)
 		if err != nil {
 			return addOptions{}, err
 		}
@@ -574,6 +589,7 @@ func addEquivalentCommand(opts addOptions) string {
 	for _, host := range opts.hosts {
 		appendFlagValue("--domain", host)
 	}
+	appendFlagValue("--tunnel", opts.tunnel)
 	parts = appendAppSettingsFlags(parts, opts.appSettings, false)
 	for _, key := range sortedEnvKeys(opts.env) {
 		parts = append(parts, "--env", shellQuote(key+"="+opts.env[key]))
@@ -861,7 +877,7 @@ func addFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "name", "domain", "env":
+	case "name", "domain", "env", "tunnel":
 		return true
 	default:
 		return appSettingsFlagTakesValue(arg)
