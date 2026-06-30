@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"strings"
 	"syscall"
 	"time"
@@ -25,13 +26,30 @@ type Server struct {
 	deployManager *DeployManager
 }
 
+type WebhookCommit struct {
+	Added    []string `json:"added"`
+	Removed  []string `json:"removed"`
+	Modified []string `json:"modified"`
+}
+
 type PushPayload struct {
-	Ref          string `json:"ref"`
-	After        string `json:"after"`
-	Repository   Repo   `json:"repository"`
+	Ref          string          `json:"ref"`
+	After        string          `json:"after"`
+	Repository   Repo            `json:"repository"`
+	Commits      []WebhookCommit `json:"commits"`
 	Installation struct {
 		ID int64 `json:"id"`
 	} `json:"installation"`
+}
+
+func (p *PushPayload) ChangedFiles() []string {
+	var files []string
+	for _, c := range p.Commits {
+		files = append(files, c.Added...)
+		files = append(files, c.Removed...)
+		files = append(files, c.Modified...)
+	}
+	return files
 }
 
 type Repo struct {
@@ -133,22 +151,70 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "bad_config"})
 		return
 	}
-	app, branch, reason := config.AppForPush(&payload)
-	if app == nil {
+	apps, branch, reason := config.AppsForPush(&payload)
+	if len(apps) == 0 {
 		s.logger.Printf("[webhook:%s] ignored %s@%s: %s", delivery, payload.Repository.FullName, payload.After, reason)
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "ignored": true, "reason": reason})
 		return
 	}
 
-	runID := s.deployManager.Enqueue(DeployRequest{
-		App:            *app,
-		Repo:           payload.Repository.FullName,
-		Branch:         branch,
-		SHA:            payload.After,
-		InstallationID: payload.Installation.ID,
+	changedFiles := payload.ChangedFiles()
+	var acceptedRunIDs []string
+	var ignoredApps []string
+
+	for _, app := range apps {
+		watchPaths := app.WatchPaths
+		if len(watchPaths) == 0 && app.StaticDir != "" && app.StaticDir != "." {
+			watchPaths = []string{app.StaticDir + "/**"}
+		}
+
+		shouldDeploy := true
+		if len(watchPaths) > 0 && len(changedFiles) > 0 {
+			shouldDeploy = false
+			for _, file := range changedFiles {
+				for _, pattern := range watchPaths {
+					if matchPath(pattern, file) {
+						shouldDeploy = true
+						break
+					}
+				}
+				if shouldDeploy {
+					break
+				}
+			}
+		}
+
+		if !shouldDeploy {
+			s.logger.Printf("[webhook:%s] app %s ignored: no changed files match watch paths", delivery, app.Name)
+			ignoredApps = append(ignoredApps, app.Name)
+			continue
+		}
+
+		runID := s.deployManager.Enqueue(DeployRequest{
+			App:            app,
+			Repo:           payload.Repository.FullName,
+			Branch:         branch,
+			SHA:            payload.After,
+			InstallationID: payload.Installation.ID,
+		})
+		s.logger.Printf("[webhook:%s] accepted %s@%s as %s", delivery, payload.Repository.FullName, payload.After, runID)
+		acceptedRunIDs = append(acceptedRunIDs, runID)
+	}
+
+	if len(acceptedRunIDs) == 0 {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"ok":      true,
+			"ignored": true,
+			"reason":  fmt.Sprintf("no apps matched changed files: %v ignored", ignoredApps),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok":       true,
+		"accepted": true,
+		"run_ids":  acceptedRunIDs,
 	})
-	s.logger.Printf("[webhook:%s] accepted %s@%s as %s", delivery, payload.Repository.FullName, payload.After, runID)
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "accepted": true, "run_id": runID})
 }
 
 func (s *Server) handleSetupGitHubApp(w http.ResponseWriter, r *http.Request) {
@@ -267,4 +333,28 @@ func envDefault(name, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func matchPath(pattern, file string) bool {
+	pattern = strings.TrimSpace(pattern)
+	file = strings.TrimSpace(file)
+	if pattern == "" || file == "" {
+		return false
+	}
+	if pattern == "*" || pattern == "**" {
+		return true
+	}
+	if strings.HasSuffix(pattern, "/**") {
+		prefix := strings.TrimSuffix(pattern, "/**")
+		return file == prefix || strings.HasPrefix(file, prefix+"/")
+	}
+	if strings.HasSuffix(pattern, "/") {
+		prefix := strings.TrimSuffix(pattern, "/")
+		return file == prefix || strings.HasPrefix(file, prefix+"/")
+	}
+	if file == pattern {
+		return true
+	}
+	matched, err := path.Match(pattern, file)
+	return err == nil && matched
 }

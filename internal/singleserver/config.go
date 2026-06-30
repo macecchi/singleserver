@@ -40,6 +40,7 @@ type AppConfig struct {
 	StaticDir       string         `yaml:"static_dir,omitempty"`
 	DeployTimeout   string         `yaml:"deploy_timeout,omitempty"`
 	Storage         *StorageConfig `yaml:"storage,omitempty"`
+	WatchPaths      []string       `yaml:"watch_paths,omitempty"`
 	SecretEnvKeys   []string       `yaml:"-"`
 }
 
@@ -174,6 +175,14 @@ func (a *AppConfig) Normalize() error {
 			return fmt.Errorf("storage mount for %s must be absolute: %q", a.Repo, a.Storage.Mount)
 		}
 	}
+	var cleanedWatchPaths []string
+	for _, wp := range a.WatchPaths {
+		wp = strings.TrimSpace(wp)
+		if wp != "" {
+			cleanedWatchPaths = append(cleanedWatchPaths, wp)
+		}
+	}
+	a.WatchPaths = cleanedWatchPaths
 	return nil
 }
 
@@ -392,7 +401,7 @@ func (c *Config) AppByNameOrRepo(value string) (*AppConfig, bool) {
 	return nil, false
 }
 
-func (c *Config) AppForPush(payload *PushPayload) (*AppConfig, string, string) {
+func (c *Config) AppsForPush(payload *PushPayload) ([]AppConfig, string, string) {
 	if payload == nil || payload.Repository.FullName == "" {
 		return nil, "", "missing repository"
 	}
@@ -400,6 +409,8 @@ func (c *Config) AppForPush(payload *PushPayload) (*AppConfig, string, string) {
 	if branch == "" {
 		return nil, "", "unsupported push ref"
 	}
+	var apps []AppConfig
+	var lastErr string
 	for i := range c.Apps {
 		app := &c.Apps[i]
 		if !strings.EqualFold(app.Repo, payload.Repository.FullName) {
@@ -410,14 +421,22 @@ func (c *Config) AppForPush(payload *PushPayload) (*AppConfig, string, string) {
 			targetBranch = strings.TrimSpace(payload.Repository.DefaultBranch)
 		}
 		if targetBranch == "" {
-			return nil, branch, app.Repo + " default branch is missing"
+			lastErr = app.Repo + " default branch is missing"
+			continue
 		}
 		if branch != targetBranch {
-			return nil, branch, fmt.Sprintf("%s:%s does not match %s", app.Repo, branch, targetBranch)
+			lastErr = fmt.Sprintf("%s:%s does not match %s", app.Repo, branch, targetBranch)
+			continue
 		}
-		return app, branch, ""
+		apps = append(apps, *app)
 	}
-	return nil, branch, payload.Repository.FullName + " is not configured"
+	if len(apps) == 0 {
+		if lastErr == "" {
+			lastErr = payload.Repository.FullName + " is not configured"
+		}
+		return nil, branch, lastErr
+	}
+	return apps, branch, ""
 }
 
 func branchFromRef(ref string) string {
