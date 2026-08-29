@@ -118,7 +118,7 @@ func TestEnsureGitHubSetupReadyExplainsIncompleteSetup(t *testing.T) {
 }
 
 func TestPromptAddOptionsUsesDockerfileDefaults(t *testing.T) {
-	opts := addOptions{repo: "acme/app"}
+	opts := addOptions{repo: "acme/app", tunnel: "public"}
 	var out bytes.Buffer
 	got, err := promptAddOptions(opts, strings.NewReader("\n\n\n\n\n"), &out, addPromptContext{
 		hasDockerfile: true,
@@ -149,7 +149,7 @@ func TestPromptAddOptionsUsesDockerfileDefaults(t *testing.T) {
 }
 
 func TestPromptAddOptionsFlushesBeforeReading(t *testing.T) {
-	opts := addOptions{repo: "acme/app"}
+	opts := addOptions{repo: "acme/app", tunnel: "public"}
 	out := &flushCountingWriter{}
 	_, err := promptAddOptions(opts, strings.NewReader("\n\n\n\n\n"), out, addPromptContext{
 		hasDockerfile: true,
@@ -186,7 +186,7 @@ func TestPromptAddOptionsGeneratedNodeStaticBuild(t *testing.T) {
 		"n",
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := promptAddOptions(addOptions{repo: "acme/site"}, strings.NewReader(input), &out, addPromptContext{
+	got, err := promptAddOptions(addOptions{repo: "acme/site", tunnel: "public"}, strings.NewReader(input), &out, addPromptContext{
 		hasDockerfile: false,
 		targetBranch:  "main",
 	})
@@ -224,7 +224,7 @@ func TestPromptAddOptionsGeneratedBunDynamicApp(t *testing.T) {
 		"y",
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := promptAddOptions(addOptions{repo: "acme/app"}, strings.NewReader(input), &out, addPromptContext{
+	got, err := promptAddOptions(addOptions{repo: "acme/app", tunnel: "public"}, strings.NewReader(input), &out, addPromptContext{
 		hasDockerfile: false,
 		targetBranch:  "main",
 	})
@@ -427,7 +427,7 @@ func TestPromptAddOptionsCollectsEnv(t *testing.T) {
 		"n",                     // deploy now?
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := promptAddOptions(addOptions{repo: "acme/app"}, strings.NewReader(input), &out, addPromptContext{
+	got, err := promptAddOptions(addOptions{repo: "acme/app", tunnel: "public"}, strings.NewReader(input), &out, addPromptContext{
 		hasDockerfile: true,
 		targetBranch:  "main",
 	})

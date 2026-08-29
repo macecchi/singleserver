@@ -53,6 +53,7 @@
             <a href="#deploys">What a push does</a>
             <a href="#commands">Commands</a>
             <a href="#config">Configuration</a>
+            <a href="#private-tunnels">Private apps</a>
             <a href="#contract">The app contract</a>
             <a href="#files">Files on your server</a>
             <a href="#troubleshooting">When something breaks</a>
@@ -130,7 +131,7 @@
             </div>
             <div>
                 <strong>Tailscale is the private way in.</strong>
-                <p>Tailscale SSH gets you into the box without exposing SSH to the public internet. Tailscale Funnel gives GitHub a public URL to reach the daemon's webhook endpoint, so the server itself never needs a domain name or a DNS record.</p>
+                <p>Tailscale SSH gets you into the box without exposing SSH to the public internet. Tailscale Funnel gives GitHub a public URL to reach the daemon's webhook endpoint, so the server itself never needs a domain name or a DNS record. And apps added with <code>--tunnel private</code> are served only to your tailnet, each on its own Tailscale node — see <a href="#private-tunnels">Private apps on Tailscale</a>.</p>
             </div>
             <div>
                 <strong>Cloudflare is the public way in.</strong>
@@ -253,7 +254,7 @@ curl -fsSL <span class="accent">https://singleserver.com/install.sh</span> | SIN
             <div class="command" id="cmd-connect">
                 <h4>Connect Tailscale, Cloudflare, or GitHub</h4>
                 <div class="code-wrapper">
-                    <pre class="code-block">singleserver connect tailscale [--auth-key &lt;key&gt;] [--hostname &lt;name&gt;]
+                    <pre class="code-block">singleserver connect tailscale [--auth-key &lt;key&gt;] [--hostname &lt;name&gt;] [--oauth-client-id &lt;id&gt; --oauth-client-secret &lt;secret&gt;]
 singleserver connect cloudflare [--account &lt;id&gt;] [--tunnel &lt;name&gt;]
 singleserver connect github</pre>
                 </div>
@@ -261,6 +262,7 @@ singleserver connect github</pre>
                 <p><code>connect tailscale</code> brings up Tailscale, enables Tailscale SSH, and starts Tailscale Funnel for the daemon's local port. The resulting <code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net</code> URL becomes the public address GitHub uses for the setup page and webhooks.</p>
                 <ul class="option-list">
                     <li><code>--auth-key &lt;key&gt;</code><span>Use a Tailscale auth key instead of browser login. For unattended installs, make it a tagged key so the node never expires (see below).</span></li>
+                    <li><code>--oauth-client-id, --oauth-client-secret</code><span>Store the tailnet OAuth client used to manage <a href="#private-tunnels">private app services</a>. Validated against the API before storing.</span></li>
                     <li><code>--hostname &lt;name&gt;</code><span>Set the Tailscale machine name. Defaults to the server hostname.</span></li>
                     <li><code>--non-interactive</code><span>Never prompt. Missing provider input is reported as pending or failed.</span></li>
                 </ul>
@@ -305,7 +307,8 @@ singleserver connect github</pre>
                 </div>
                 <p>Adds a repository, verifies the GitHub App can reach it, writes the entry to <code>apps.yml</code>, wires up any domains, stores any environment variables you set, deploys the current branch tip, and runs doctor. In an interactive session it asks only the questions it cannot answer itself, then prints the equivalent flag-based command with <code>--non-interactive</code>. Environment variables are written before that first deploy, so an app that reads a required secret at boot starts cleanly the first time.</p>
                 <ul class="option-list">
-                    <li><code>--domain &lt;host&gt;</code><span>Public hostname for the app, like <code>app.example.com</code>. Repeat the flag for more than one.</span></li>
+                    <li><code>--domain &lt;host&gt;</code><span>Public hostname for the app, like <code>app.example.com</code>. Repeat the flag for more than one. For private apps, a tailnet hostname like <code>app.tailnet-name.ts.net</code>, at most one.</span></li>
+                    <li><code>--tunnel public|private</code> <span class="opt-badge">Default: public</span><span>Where the app is reachable: <code>public</code> serves it to the internet through Cloudflare, <code>private</code> serves it only to your tailnet through Tailscale. See <a href="#private-tunnels">Private apps on Tailscale</a>.</span></li>
                     <li><code>--branch &lt;name&gt;</code> <span class="opt-badge">Default: repo default branch</span><span>Deploy only pushes to this branch.</span></li>
                     <li><code>--name &lt;app&gt;</code> <span class="opt-badge">Default: repo name, lowercased</span><span>Override the app name. Names must be unique on the server.</span></li>
                     <li><code>--runtime static|node|bun</code> <span class="opt-badge req">Required without a Dockerfile</span><span>Generate a temporary Dockerfile during deploys. Repos with their own Dockerfile must omit this.</span></li>
@@ -420,7 +423,7 @@ singleserver domains remove &lt;app&gt; &lt;domain&gt; [--no-deploy] [--non-inte
 singleserver domains list [app]
 singleserver domains verify [app]</pre>
                 </div>
-                <p>Attaches and detaches public hostnames. <code>add</code> finds the Cloudflare zone that owns the hostname, writes a proxied CNAME to your tunnel, adds the tunnel route, and redeploys the app so Kamal routes the new host. <code>remove</code> undoes all of that.</p>
+                <p>Attaches and detaches hostnames. For public apps, <code>add</code> finds the Cloudflare zone that owns the hostname, writes a proxied CNAME to your tunnel, adds the tunnel route, and redeploys the app so Kamal routes the new host. For private apps, or any hostname ending in <code>.ts.net</code>, it provisions a Tailscale node for the app instead (see <a href="#private-tunnels">Private apps on Tailscale</a>). <code>remove</code> undoes all of that.</p>
                 <ul class="option-list">
                     <li><code>--no-deploy</code><span>Update config and DNS without redeploying the app yet.</span></li>
                     <li><code>--non-interactive</code><span>Never prompt. App and domain must be supplied for add/remove.</span></li>
@@ -571,6 +574,29 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <li><strong>Healthcheck</strong><span class="default">Poll the healthcheck path every second, 1s timeout.</span> Tight intervals keep zero-downtime swaps fast for small apps.</li>
             <li><strong>Timeouts</strong><span class="default">Deploy 10s, drain 1s.</span> Tuned for small containers that boot fast. A repo-level <code>config/deploy.yml</code> is the escape hatch for apps that need different numbers.</li>
         </ul>
+    </section>
+
+    <section id="private-tunnels">
+        <h2>Private apps on Tailscale</h2>
+        <p>Not everything belongs on the internet. An app added with <code>--tunnel private</code> gets real HTTPS at a name only your tailnet can reach: no public DNS, no Cloudflare, no public IP in the path.</p>
+
+        <div class="code-wrapper">
+            <pre class="code-block">singleserver add <span class="accent">https://github.com/owner/app</span> --tunnel private</pre>
+        </div>
+        <p>The app comes up at <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, named after the app, or after the first label of a <code>--domain</code> you pass. Private apps take at most one domain.</p>
+
+        <h3 id="private-tunnels-how">How it works</h3>
+        <p>Each private app is a <a href="https://tailscale.com/docs/features/tailscale-services">Tailscale Service</a>: a stable name and virtual IP on your tailnet, hosted by this server's own node. Single Server creates the service through the Tailscale API, tags it <code>tag:singleserver</code>, and runs <code>tailscale serve --service</code> so HTTPS for <code>app.&lt;tailnet&gt;.ts.net</code> terminates on the node, with a certificate Tailscale provisions, and lands on Kamal's proxy on loopback, which routes by hostname to the container. No extra daemons, no per-app nodes, no DNS step. Deploys work exactly like public apps.</p>
+        <p>Removing the app or its domain stops serving and deletes the service.</p>
+
+        <h3 id="private-tunnels-prep">One-time tailnet setup</h3>
+        <p>One tag, <code>tag:singleserver</code>, marks both this server and its app services, and everything below refers to it. Three things in the <a href="https://login.tailscale.com/admin">Tailscale admin console</a>, once per tailnet. An interactive <code>add --tunnel private</code> walks you through them.</p>
+        <ul class="settings-list">
+            <li><strong>Policy entries</strong><span class="default">Access controls &rarr; JSON editor</span> Add two top-level entries to the tailnet policy file: <code>"tagOwners": {"tag:singleserver": ["autogroup:admin"]}</code>, and <code>"autoApprovers": {"services": {"tag:singleserver": ["tag:singleserver"]}}</code> &mdash; services carrying the tag may be hosted, auto-approved, by machines carrying it. (Also check MagicDNS and HTTPS certificates are on, under DNS &mdash; they usually already are.)</li>
+            <li><strong>Tag this server</strong><span class="default">Machines &rarr; &hellip; &rarr; Edit ACL tags</span> Add <code>tag:singleserver</code> to this server's machine. Only tagged machines can host Tailscale Services, and the tag is what the auto-approval keys on. Other tags on the machine are fine.</li>
+            <li><strong>An OAuth client</strong><span class="default">Settings &rarr; Trust credentials</span> Generate an OAuth client with the <em>Services</em> write scope, tagged <code>tag:singleserver</code>. Store it with <code>singleserver connect tailscale --oauth-client-id &lt;id&gt; --oauth-client-secret &lt;secret&gt;</code>. Unlike auth keys, OAuth clients never expire &mdash; this is set up once and forgotten.</li>
+        </ul>
+        <p>If an app comes up unreachable, the usual cause is host approval: check the admin console's Services page, or add the <code>autoApprovers</code> entry above.</p>
     </section>
 
     <section id="contract">

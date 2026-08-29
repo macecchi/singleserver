@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -174,6 +175,11 @@ func (m *DeployManager) runHealthcheck(app AppConfig, runID string) error {
 	}
 
 	client := healthcheckClient()
+	// The public-DNS resolver below can never see private tailnet names, so
+	// private tunnels are checked through the host resolver (MagicDNS).
+	if app.Tunnel == "private" || isTailnetURL(app.Healthcheck) {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 	deadline := time.Now().Add(2 * time.Minute)
 	var lastErr error
 	for time.Now().Before(deadline) {
@@ -203,6 +209,14 @@ func (m *DeployManager) runHealthcheck(app AppConfig, runID string) error {
 		return lastErr
 	}
 	return fmt.Errorf("healthcheck %s did not become ready", app.Healthcheck)
+}
+
+func isTailnetURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".ts.net")
 }
 
 func healthcheckClient() *http.Client {

@@ -78,9 +78,9 @@ func TestDomainsAddKeepsConfigWhenCloudflareFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	originalSync := syncCloudflareAppDomainFunc
-	t.Cleanup(func() { syncCloudflareAppDomainFunc = originalSync })
-	syncCloudflareAppDomainFunc = func(hostname string, add bool, w io.Writer) error {
+	originalSync := syncAppDomainFunc
+	t.Cleanup(func() { syncAppDomainFunc = originalSync })
+	syncAppDomainFunc = func(app AppConfig, hostname string, add bool, w io.Writer) error {
 		return errors.New("cloudflare unavailable")
 	}
 
@@ -121,10 +121,10 @@ func TestDomainsRemoveRejectsHostNotConfiguredForApp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	originalSync := syncCloudflareAppDomainFunc
-	t.Cleanup(func() { syncCloudflareAppDomainFunc = originalSync })
+	originalSync := syncAppDomainFunc
+	t.Cleanup(func() { syncAppDomainFunc = originalSync })
 	syncCalled := false
-	syncCloudflareAppDomainFunc = func(hostname string, add bool, w io.Writer) error {
+	syncAppDomainFunc = func(app AppConfig, hostname string, add bool, w io.Writer) error {
 		syncCalled = true
 		return nil
 	}

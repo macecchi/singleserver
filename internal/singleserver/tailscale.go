@@ -18,6 +18,12 @@ import (
 type TailscaleState struct {
 	Hostname  string `json:"hostname"`
 	FunnelURL string `json:"funnel_url"`
+	// AuthKey optionally registers this server's own node non-interactively.
+	AuthKey string `json:"auth_key,omitempty"`
+	// The tailnet OAuth client (scope: services write) that manages the
+	// Tailscale Services private apps are served as.
+	OAuthClientID     string `json:"oauth_client_id,omitempty"`
+	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
 }
 
 type tailscaleSelf struct {
@@ -44,14 +50,36 @@ func cliTailscaleConnect(args []string, w io.Writer) error {
 	fs.SetOutput(w)
 	authKey := fs.String("auth-key", defaultTailscaleAuthKey(), "Tailscale auth key")
 	hostname := fs.String("hostname", strings.TrimSpace(os.Getenv("SINGLESERVER_TAILSCALE_HOSTNAME")), "Tailscale hostname")
+	oauthID := fs.String("oauth-client-id", "", "tailnet OAuth client ID for managing app services")
+	oauthSecret := fs.String("oauth-client-secret", "", "tailnet OAuth client secret")
 	if err := fs.Parse(normalizeFlagArgs(args, tailscaleFlagTakesValue)); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: singleserver connect tailscale [--auth-key <key>] [--hostname <name>]")
+		return errors.New("usage: singleserver connect tailscale [--auth-key <key>] [--hostname <name>] [--oauth-client-id <id> --oauth-client-secret <secret>]")
 	}
 	if err := ensureBaseFiles(); err != nil {
 		return err
+	}
+	if strings.TrimSpace(*oauthID) != "" || strings.TrimSpace(*oauthSecret) != "" {
+		id := strings.TrimSpace(*oauthID)
+		secret := strings.TrimSpace(*oauthSecret)
+		if id == "" || secret == "" {
+			return errors.New("--oauth-client-id and --oauth-client-secret must be provided together")
+		}
+		if _, err := tailscaleAPIToken(id, secret); err != nil {
+			return fmt.Errorf("the OAuth client was rejected by the Tailscale API: %w", err)
+		}
+		state, err := loadTailscaleState()
+		if err != nil {
+			return err
+		}
+		state.OAuthClientID = id
+		state.OAuthClientSecret = secret
+		if err := writeTailscaleState(state); err != nil {
+			return err
+		}
+		writeCheck(w, "tailscale", "oauth", "ok", "stored for private app services")
 	}
 	if _, err := commandOutputFunc(5*time.Second, "tailscale", "version"); err != nil {
 		return fmt.Errorf("tailscale is not installed; rerun the Single Server installer: %w", err)
@@ -85,6 +113,32 @@ func cliTailscaleConnect(args []string, w io.Writer) error {
 	writeCheck(w, "tailscale", "status", "ok", tailscaleStatusName(status))
 	reportTailscaleKeyExpiry(w, status)
 
+	// Offer private apps as an opt-in, and only then walk through the OAuth
+	// client setup - collected interactively so the secret never has to
+	// appear on a command line.
+	if state, err := loadTailscaleState(); err == nil {
+		if id, secret := tailscaleOAuthCredentials(state); (id == "" || secret == "") && cliCanPrompt(currentCLIMode()) {
+			enable, err := interactivePrompter(w).askYesNo("Enable private apps, served only to your tailnet?", false)
+			if err != nil {
+				return err
+			}
+			if enable {
+				pid, psecret, perr := promptTailscaleOAuthClient(w)
+				if perr != nil {
+					return perr
+				}
+				if pid != "" && psecret != "" {
+					state.OAuthClientID = pid
+					state.OAuthClientSecret = psecret
+					if err := writeTailscaleState(state); err != nil {
+						return err
+					}
+					writeCheck(w, "tailscale", "oauth", "ok", "stored for private app services")
+				}
+			}
+		}
+	}
+
 	if err := commandRunFunc(15*time.Second, "tailscale", "set", "--ssh"); err != nil {
 		writeCheck(w, "tailscale", "ssh", "pending", err.Error())
 	} else {
@@ -95,7 +149,7 @@ func cliTailscaleConnect(args []string, w io.Writer) error {
 	writeCheck(w, "tailscale", "funnel", "starting", "127.0.0.1:"+port)
 	if err := commandRunToWriterFunc(w, 45*time.Second, "tailscale", "funnel", "--bg", "--yes", port); err != nil {
 		writeCheck(w, "tailscale", "funnel", "pending", err.Error())
-		return writeTailscaleStateFromStatus(status, "")
+		return writeTailscaleStateFromStatus(status, "", *authKey)
 	}
 	status, err = currentTailscaleStatus()
 	if err != nil {
@@ -104,9 +158,9 @@ func cliTailscaleConnect(args []string, w io.Writer) error {
 	funnelURL := tailscaleFunnelURL(status)
 	if funnelURL == "" {
 		writeCheck(w, "tailscale", "funnel", "pending", "-", "could not determine Funnel URL from tailscale status")
-		return writeTailscaleStateFromStatus(status, "")
+		return writeTailscaleStateFromStatus(status, "", *authKey)
 	}
-	if err := writeTailscaleStateFromStatus(status, funnelURL); err != nil {
+	if err := writeTailscaleStateFromStatus(status, funnelURL, *authKey); err != nil {
 		return err
 	}
 	env, err := loadServiceEnv()
@@ -198,10 +252,19 @@ func tailscaleFunnelURL(status *tailscaleStatus) string {
 	return "https://" + host
 }
 
-func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string) error {
+func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string, authKey string) error {
+	existing, _ := loadTailscaleState()
+	if authKey == "" && existing != nil {
+		authKey = existing.AuthKey
+	}
 	state := &TailscaleState{
 		Hostname:  tailscaleStatusName(status),
 		FunnelURL: strings.TrimRight(funnelURL, "/"),
+		AuthKey:   authKey,
+	}
+	if existing != nil {
+		state.OAuthClientID = existing.OAuthClientID
+		state.OAuthClientSecret = existing.OAuthClientSecret
 	}
 	return writeTailscaleState(state)
 }
@@ -238,7 +301,12 @@ func tailscaleFlagTakesValue(arg string) bool {
 	if before, _, ok := strings.Cut(name, "="); ok {
 		name = before
 	}
-	return name == "auth-key" || name == "hostname"
+	switch name {
+	case "auth-key", "hostname", "oauth-client-id", "oauth-client-secret":
+		return true
+	default:
+		return false
+	}
 }
 
 func defaultTailscaleAuthKey() string {
@@ -269,6 +337,7 @@ func doctorTailscale(w io.Writer, appCount int) bool {
 	}
 	writeCheck(w, "tailscale", "status", "ok", tailscaleStatusName(status))
 	reportTailscaleKeyExpiry(w, status)
+	doctorTailscaleServices(w)
 
 	env, _ := loadServiceEnv()
 	publicURL := strings.TrimRight(env["SINGLESERVER_PUBLIC_URL"], "/")
@@ -340,4 +409,21 @@ func reportTailscaleKeyExpiry(w io.Writer, status *tailscaleStatus) {
 	}
 	writeCheck(w, "tailscale", "key expiry", "pending",
 		fmt.Sprintf("expires %s (%dd)", expiry.Format("2006-01-02"), days), detail)
+}
+
+
+func tailnetDomain() string {
+	state, err := loadTailscaleState()
+	if err != nil || state.Hostname == "" {
+		return ""
+	}
+	return tailnetDomainFromHostname(state.Hostname)
+}
+
+func tailnetDomainFromHostname(hostname string) string {
+	parts := strings.Split(hostname, ".")
+	if len(parts) >= 3 && parts[len(parts)-2] == "ts" && parts[len(parts)-1] == "net" {
+		return strings.Join(parts[1:], ".")
+	}
+	return ""
 }

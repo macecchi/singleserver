@@ -1,0 +1,304 @@
+package singleserver
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+)
+
+// Private apps are served as Tailscale Services: one VIP service per app,
+// created through the Tailscale API and hosted by this server's own node with
+// `tailscale serve --service`. The API credential is a tailnet OAuth client
+// (scope: services write), which unlike auth keys never expires.
+
+var tailscaleAPIBaseURL = "https://api.tailscale.com"
+
+type vipService struct {
+	Name    string   `json:"name,omitempty"`
+	Addrs   []string `json:"addrs,omitempty"`
+	Comment string   `json:"comment,omitempty"`
+	Ports   []string `json:"ports,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+}
+
+func tailscaleOAuthCredentials(state *TailscaleState) (string, string) {
+	id := strings.TrimSpace(os.Getenv("TAILSCALE_OAUTH_CLIENT_ID"))
+	secret := strings.TrimSpace(os.Getenv("TAILSCALE_OAUTH_CLIENT_SECRET"))
+	if id != "" && secret != "" {
+		return id, secret
+	}
+	if state != nil {
+		return state.OAuthClientID, state.OAuthClientSecret
+	}
+	return "", ""
+}
+
+func tailscaleAPIToken(clientID, clientSecret string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	form := url.Values{"client_id": {clientID}, "client_secret": {clientSecret}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tailscaleAPIBaseURL+"/api/v2/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("tailscale oauth token request returned %s: %s", res.Status, strings.TrimSpace(string(body)))
+	}
+	var parsed struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	if parsed.AccessToken == "" {
+		return "", errors.New("tailscale oauth token response had no access_token")
+	}
+	return parsed.AccessToken, nil
+}
+
+func tailscaleAPIRequest(token, method, path string, payload any) (int, []byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var reqBody io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return 0, nil, err
+		}
+		reqBody = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, tailscaleAPIBaseURL+path, reqBody)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	return res.StatusCode, body, nil
+}
+
+func vipServicePath(name string) string {
+	return "/api/v2/tailnet/-/vip-services/" + url.PathEscape("svc:"+name)
+}
+
+// ensureVIPServiceFunc creates the app's VIP service, or updates it in place
+// preserving any auto-allocated addresses.
+var ensureVIPServiceFunc = ensureVIPService
+
+func ensureVIPService(token, name, comment string) error {
+	svc := vipService{
+		Name:    "svc:" + name,
+		Comment: comment,
+		Ports:   []string{"tcp:443"},
+		Tags:    []string{tailscaleServiceTag},
+	}
+	status, body, err := tailscaleAPIRequest(token, http.MethodGet, vipServicePath(name), nil)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusOK {
+		var existing vipService
+		if err := json.Unmarshal(body, &existing); err == nil {
+			svc.Addrs = existing.Addrs
+		}
+	}
+	status, body, err = tailscaleAPIRequest(token, http.MethodPut, vipServicePath(name), svc)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK && status != http.StatusCreated {
+		if strings.Contains(string(body), "not a service") {
+			return fmt.Errorf("the tailnet already has a machine named %q, which blocks the service's DNS name; remove that machine in the admin console (Machines) and retry: HTTP %d: %s", name, status, strings.TrimSpace(string(body)))
+		}
+		return fmt.Errorf("creating tailscale service svc:%s returned HTTP %d: %s", name, status, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+var deleteVIPServiceFunc = deleteVIPService
+
+func deleteVIPService(token, name string) error {
+	status, body, err := tailscaleAPIRequest(token, http.MethodDelete, vipServicePath(name), nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK && status != http.StatusNoContent && status != http.StatusNotFound {
+		return fmt.Errorf("deleting tailscale service svc:%s returned HTTP %d: %s", name, status, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+const tailscaleServiceTag = "tag:singleserver"
+
+// promptTailscaleOAuthClient walks an interactive user through creating the
+// tailnet OAuth client and collects it. Returns empty values without error
+// when prompting is not possible or the user skips.
+func promptTailscaleOAuthClient(w io.Writer) (string, string, error) {
+	if !cliCanPrompt(currentCLIMode()) {
+		return "", "", nil
+	}
+	fmt.Fprintln(w, "Private apps are served as Tailscale Services, managed through the Tailscale API.")
+	fmt.Fprintln(w, "One tag, "+tailscaleServiceTag+", marks both this server and its app services.")
+	fmt.Fprintln(w, "In the admin console (https://login.tailscale.com/admin), once per tailnet:")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "1. Access controls -> JSON editor: add two top-level entries to the policy file:")
+	fmt.Fprintf(w, "     \"tagOwners\": {\"%s\": [\"autogroup:admin\"]}\n", tailscaleServiceTag)
+	fmt.Fprintf(w, "     \"autoApprovers\": {\"services\": {\"%s\": [\"%s\"]}}\n", tailscaleServiceTag, tailscaleServiceTag)
+	fmt.Fprintln(w, "   The second entry lets this server host new app services without per-app approval.")
+	fmt.Fprintln(w, "2. Machines -> this server -> Edit ACL tags: add "+tailscaleServiceTag+".")
+	fmt.Fprintln(w, "3. Settings -> Trust credentials: create an OAuth client with the Services")
+	fmt.Fprintln(w, "   write scope, tagged "+tailscaleServiceTag+". It never expires.")
+	p := interactivePrompter(w)
+	for {
+		id, err := p.askOptional("OAuth client ID (empty to skip)")
+		if err != nil {
+			return "", "", err
+		}
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return "", "", nil
+		}
+		secret, err := p.askOptional("OAuth client secret")
+		if err != nil {
+			return "", "", err
+		}
+		secret = strings.TrimSpace(secret)
+		if secret == "" {
+			fmt.Fprintln(w, "The client secret is required; it is shown once when the client is created.")
+			continue
+		}
+		if _, err := tailscaleAPIToken(id, secret); err != nil {
+			fmt.Fprintf(w, "Those credentials didn't work: %v\n", err)
+			continue
+		}
+		return id, secret, nil
+	}
+}
+
+func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Writer) error {
+	if !strings.Contains(hostname, ".") {
+		if domain := tailnetDomain(); domain != "" {
+			hostname = hostname + "." + domain
+		}
+	}
+	// The app is served at the service's MagicDNS name, so the service name
+	// must be the first label of the configured domain or the two never match.
+	// With no domain configured the app name is the service name, so the app
+	// is reachable at <name>.<tailnet> either way.
+	serviceName := app.Name
+	if label, _, ok := strings.Cut(hostname, "."); ok && label != "" {
+		serviceName = label
+	}
+
+	state, err := loadTailscaleState()
+	if err != nil {
+		return err
+	}
+	clientID, clientSecret := tailscaleOAuthCredentials(state)
+	if clientID == "" || clientSecret == "" {
+		if !add {
+			// Best effort on removal: without credentials the service record
+			// stays in the admin console, but the host stops serving it.
+			writeCheck(w, app.Name, "tailscale_service", "pending", "no OAuth client stored; delete svc:"+serviceName+" in the admin console")
+			return unserveTailscaleService(app.Name, serviceName, w)
+		}
+		id, secret, err := promptTailscaleOAuthClient(w)
+		if err != nil {
+			return err
+		}
+		if id == "" || secret == "" {
+			return errors.New("a Tailscale OAuth client (scope: services write) is required for private apps; run `singleserver connect tailscale --oauth-client-id <id> --oauth-client-secret <secret>` or set TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_OAUTH_CLIENT_SECRET")
+		}
+		clientID, clientSecret = id, secret
+		state.OAuthClientID = id
+		state.OAuthClientSecret = secret
+		if err := writeTailscaleState(state); err != nil {
+			return err
+		}
+		writeCheck(w, app.Name, "tailscale_oauth", "ok", "stored for future private apps")
+	}
+
+	token, err := tailscaleAPIToken(clientID, clientSecret)
+	if err != nil {
+		return fmt.Errorf("tailscale API authentication failed (check the stored OAuth client): %w", err)
+	}
+
+	if add {
+		// Service hosts must have tag-based identity.
+		if status, err := currentTailscaleStatus(); err == nil && status.Self != nil && len(status.Self.Tags) == 0 {
+			return errors.New("this server's Tailscale node has no tags, and only tagged nodes can host Tailscale Services; add " + tailscaleServiceTag + " to this machine in the admin console (Machines -> Edit ACL tags)")
+		}
+
+		writeCheck(w, app.Name, "tailscale_service", "creating", "svc:"+serviceName)
+		if err := ensureVIPServiceFunc(token, serviceName, "Single Server app "+app.Name); err != nil {
+			return err
+		}
+
+		writeCheck(w, app.Name, "tailscale_serve", "configuring", "svc:"+serviceName+" -> 127.0.0.1:80")
+		serveArgs := []string{"serve", "--service=svc:" + serviceName, "--https=443", "http://127.0.0.1:80"}
+		if err := commandRunFunc(30*time.Second, "tailscale", serveArgs...); err != nil {
+			return fmt.Errorf("failed to serve svc:%s: %w", serviceName, err)
+		}
+
+		writeCheck(w, app.Name, "tailscale_tunnel", "ok", hostname,
+			"if the app stays unreachable, approve this host on the admin console's Services page or add the autoApprovers policy entry")
+	} else {
+		if err := unserveTailscaleService(app.Name, serviceName, w); err != nil {
+			return err
+		}
+		if err := deleteVIPServiceFunc(token, serviceName); err != nil {
+			return err
+		}
+		writeCheck(w, app.Name, "tailscale_tunnel", "ok", "removed")
+	}
+
+	return nil
+}
+
+func unserveTailscaleService(appName, serviceName string, w io.Writer) error {
+	writeCheck(w, appName, "tailscale_serve", "stopping", "svc:"+serviceName)
+	_ = commandRunFunc(30*time.Second, "tailscale", "serve", "drain", "svc:"+serviceName)
+	_ = commandRunFunc(30*time.Second, "tailscale", "serve", "--service=svc:"+serviceName, "--https=443", "off")
+	return nil
+}
+
+// doctorTailscaleServices reports on the stored OAuth client used to manage
+// app services. Silent when none is stored (no private apps configured yet).
+func doctorTailscaleServices(w io.Writer) {
+	state, err := loadTailscaleState()
+	if err != nil {
+		return
+	}
+	clientID, clientSecret := tailscaleOAuthCredentials(state)
+	if clientID == "" || clientSecret == "" {
+		return
+	}
+	if _, err := tailscaleAPIToken(clientID, clientSecret); err != nil {
+		writeCheck(w, "tailscale", "oauth", "failed", err.Error(),
+			"private app services cannot be managed; store a working OAuth client with `singleserver connect tailscale --oauth-client-id <id> --oauth-client-secret <secret>`")
+		return
+	}
+	writeCheck(w, "tailscale", "oauth", "ok", "services API reachable")
+}
