@@ -402,6 +402,10 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 		upArgs := []string{
 			"--socket=" + socketPath,
 			"up",
+			// Reused or pre-existing node state can hold non-default prefs,
+			// which make `tailscale up` refuse to run unless every one is
+			// restated. --reset keeps this automation deterministic.
+			"--reset",
 			"--ssh",
 			"--auth-key=" + authKey,
 			"--hostname=" + appNodeName,
