@@ -219,6 +219,38 @@ func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string, au
 	return writeTailscaleState(state)
 }
 
+// promptTailscaleAuthKey walks an interactive user through creating the auth
+// key with the right toggles and collects it. Returns "" without error when
+// prompting is not possible or the user skips.
+func promptTailscaleAuthKey(w io.Writer) (string, error) {
+	if !cliCanPrompt(currentCLIMode()) {
+		return "", nil
+	}
+	fmt.Fprintln(w, "Private apps register their own Tailscale nodes, which needs an auth key.")
+	fmt.Fprintln(w, "Create one at https://login.tailscale.com/admin/settings/keys with:")
+	fmt.Fprintln(w, "  Reusable     on   one key serves every future private app")
+	fmt.Fprintln(w, "  Expiration   90   the maximum; only affects adding new apps later")
+	fmt.Fprintln(w, "  Ephemeral    off  ephemeral nodes are removed when they go offline")
+	fmt.Fprintln(w, "  Tags         on   tag:singleserver, so nodes never expire")
+	fmt.Fprintln(w, "If the tag doesn't exist yet, first add \"tagOwners\": {\"tag:singleserver\": [\"autogroup:admin\"]}")
+	fmt.Fprintln(w, "in Access controls -> JSON editor, then generate the key.")
+	p := interactivePrompter(w)
+	for {
+		value, err := p.askOptional("Auth key (tskey-auth-..., empty to abort)")
+		if err != nil {
+			return "", err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", nil
+		}
+		if strings.HasPrefix(value, "tskey-auth-") {
+			return value, nil
+		}
+		fmt.Fprintln(w, "That doesn't look right: auth keys start with tskey-auth-.")
+	}
+}
+
 // tailscaleAuthErr reports whether a `tailscale up` failure looks like the
 // auth key being rejected, as opposed to a network or daemon problem.
 func tailscaleAuthErr(err error) bool {
@@ -421,7 +453,20 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 		authKey = defaultTailscaleAuthKey()
 	}
 	if authKey == "" && add {
-		return errors.New("Tailscale auth key is required to configure private tunnels; run `singleserver connect tailscale --auth-key <key>` first or set TAILSCALE_AUTHKEY in singleserver.env")
+		key, err := promptTailscaleAuthKey(w)
+		if err != nil {
+			return err
+		}
+		if key == "" {
+			return errors.New("Tailscale auth key is required to configure private tunnels; run `singleserver connect tailscale --auth-key <key>` first or set TAILSCALE_AUTHKEY in singleserver.env")
+		}
+		authKey = key
+		state.AuthKey = key
+		state.AuthKeyFailedAt = ""
+		if err := writeTailscaleState(state); err != nil {
+			return err
+		}
+		writeCheck(w, app.Name, "tailscale_auth_key", "ok", "stored for future private apps")
 	}
 
 	// The app is served at the node's own MagicDNS name, so the node hostname
