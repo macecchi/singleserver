@@ -378,7 +378,7 @@ singleserver connect github</pre>
                 <div class="code-wrapper">
                     <pre class="code-block">singleserver list</pre>
                 </div>
-                <p>One line per app: repo, branch, domains, whether the app is served <code>public</code> or <code>private</code>, and its current state.</p>
+                <p>One line per app: repo, branch, domains, whether the app is served <code>public</code> or <code>private</code>, its current state, and the commit its running container was built from. A stopped app shows no commit, since what it would run next is not what it last ran.</p>
             </div>
 
             <div class="command" id="cmd-status">
@@ -386,7 +386,7 @@ singleserver connect github</pre>
                 <div class="code-wrapper">
                     <pre class="code-block">singleserver status</pre>
                 </div>
-                <p>The quick operational view: daemon health, then each app's running container, whether it is served <code>public</code> or <code>private</code>, last deploy outcome, and external healthcheck result.</p>
+                <p>The quick operational view: daemon health, then each app's running container, whether it is served <code>public</code> or <code>private</code>, the commit it is running, last deploy outcome, and external healthcheck result. Both commands abbreviate the commit; <code>--output json</code> carries the full SHA.</p>
             </div>
 
             <div class="command" id="cmd-logs">

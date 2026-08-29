@@ -238,3 +238,44 @@ func TestOutputStatusShowsTunnelLine(t *testing.T) {
 		t.Fatalf("expected a tunnel line:\n%s", buf.String())
 	}
 }
+
+func TestOutputListShowsShortCommit(t *testing.T) {
+	var buf bytes.Buffer
+	o := newTextOutput(&buf)
+	o.listApps([]AppView{
+		{Name: "cadim", Repo: "macecchi/cadim", State: "running", Tunnel: "private", Commit: "ac8ddaf778db9a16eee02b1f727906419a46af44"},
+		{Name: "idle", Repo: "acme/idle", State: "stopped", Tunnel: "public"},
+	})
+	if err := o.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	text := buf.String()
+	if !strings.Contains(text, "COMMIT") {
+		t.Fatalf("expected a COMMIT header:\n%s", text)
+	}
+	if !strings.Contains(text, "ac8ddaf") {
+		t.Fatalf("expected the short commit:\n%s", text)
+	}
+	if strings.Contains(text, "ac8ddaf778db9a16") {
+		t.Fatalf("the table should abbreviate the sha:\n%s", text)
+	}
+}
+
+func TestOutputJSONKeepsFullCommit(t *testing.T) {
+	var buf bytes.Buffer
+	o := newJSONOutput(&buf)
+	full := "ac8ddaf778db9a16eee02b1f727906419a46af44"
+	o.listApps([]AppView{{Name: "cadim", State: "running", Commit: full}})
+	if err := o.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Apps []AppView `json:"apps"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, buf.String())
+	}
+	if len(payload.Apps) != 1 || payload.Apps[0].Commit != full {
+		t.Fatalf("json should carry the full sha: %+v", payload.Apps)
+	}
+}

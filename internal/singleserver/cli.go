@@ -210,6 +210,7 @@ func cliList(w io.Writer) error {
 			Branch: app.Branch,
 			Hosts:  app.Hosts,
 			Tunnel: app.Tunnel,
+			Commit: deployedCommitForApp(app.Name, containers),
 			State:  listStateWord(appSummaryStatus(app, containers, containerErr, journal)),
 		})
 	}
@@ -257,6 +258,7 @@ func cliStatus(w io.Writer) error {
 			views = append(views, AppView{
 				Name:   app.Name,
 				Tunnel: app.Tunnel,
+				Commit: deployedCommitForApp(app.Name, containers),
 				State:  appRuntimeWord(app, containers, containerErr),
 				Deploy: deployView(depState, depDetail),
 				Health: healthView(app),
