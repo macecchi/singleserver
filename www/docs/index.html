@@ -248,6 +248,7 @@ curl -fsSL <span class="accent">https://singleserver.com/install.sh</span> | SIN
                     <li><code>CLOUDFLARE_API_TOKEN</code><span>Set for unattended installs so Cloudflare connects without a prompt. The token needs DNS and tunnel permissions.</span></li>
                     <li><code>SINGLESERVER_INSTALL_SKIP_FIRST_RUN=1</code><span>Install the software but skip the guided setup, for when you want to run the connect commands yourself.</span></li>
                     <li><code>SINGLESERVER_CHANNEL=edge</code><span>Install the latest build of <code>main</code> (the edge channel) instead of the latest release. The default, stable, installs the latest tagged release and verifies its checksum.</span></li>
+                    <li><code>SINGLESERVER_LOCAL_BINARY=&lt;path&gt;</code><span>Install an already-built binary from this path instead of downloading one. Nothing is verified against a checksum, so point it at a file only root can write &mdash; never one under <code>/tmp</code> or another world-writable directory.</span></li>
                 </ul>
             </div>
 

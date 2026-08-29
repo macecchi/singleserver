@@ -165,6 +165,15 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 	if existing, exists := config.AppByName(app.Name); exists {
 		return fmt.Errorf("app name %s is already used by %s; rerun with --name <unique-name>", app.Name, existing.Repo)
 	}
+	if app.Tunnel == "private" {
+		service := strings.ToLower(tailscaleServiceName(app))
+		for _, existing := range config.Apps {
+			if existing.Tunnel != "private" || !strings.EqualFold(tailscaleServiceName(existing), service) {
+				continue
+			}
+			return fmt.Errorf("svc:%s is already served by %s; private apps are named after the first label of their domain, so rerun with a --domain whose first label is unique", service, existing.Repo)
+		}
+	}
 	if _, err := GeneratedDeployYAML(app); err != nil {
 		return err
 	}
@@ -636,6 +645,7 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 		Name:            o.name,
 		Branch:          o.branch,
 		Hosts:           o.hosts,
+		Tunnel:          o.tunnel,
 		Healthcheck:     o.healthcheck,
 		HealthcheckPath: o.healthcheckPath,
 		Runtime:         o.runtime,
@@ -652,9 +662,17 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 	if err := app.Normalize(); err != nil {
 		return AppConfig{}, addAppEntry{}, err
 	}
+	// A private app with no domain is served at <name>.<tailnet>. Recording that
+	// host explicitly is what gives it a Tailscale Service, a Kamal proxy host to
+	// route on, and a name `domains` can list; the tailnet suffix is appended
+	// wherever the full name is needed.
+	if app.Tunnel == "private" && len(app.Hosts) == 0 {
+		app.Hosts = []string{app.Name}
+	}
 	entry := addAppEntry{
 		repo:            app.Repo,
 		hosts:           app.Hosts,
+		tunnel:          app.Tunnel,
 		healthcheck:     app.Healthcheck,
 		healthcheckPath: "",
 		runtime:         app.Runtime,

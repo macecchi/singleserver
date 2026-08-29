@@ -345,3 +345,62 @@ func TestNormalizeRejectsInvalidDeployTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfigRejectsPrivateAppsSharingAServiceName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "apps.yml")
+	body := []byte(`apps:
+  - repo: alice/homepage
+    tunnel: private
+    hosts:
+      - notes.alice.ts.net
+  - repo: bob/notes
+    tunnel: private
+    hosts:
+      - notes.bob.ts.net
+`)
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected duplicate tailscale service error")
+	}
+	if !strings.Contains(err.Error(), "duplicate tailscale service in config") || !strings.Contains(err.Error(), "svc:notes") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigAllowsPrivateAppsWithDistinctServiceNames(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "apps.yml")
+	body := []byte(`apps:
+  - repo: alice/homepage
+    tunnel: private
+    hosts:
+      - notes.alice.ts.net
+  - repo: bob/game
+    tunnel: private
+    hosts:
+      - scores.bob.ts.net
+`)
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadConfig(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNormalizeRejectsUnknownTunnel(t *testing.T) {
+	app := AppConfig{Repo: "acme/scoreboard", Tunnel: "vpn"}
+	err := app.Normalize()
+	if err == nil {
+		t.Fatal("expected unknown tunnel to be rejected")
+	}
+	if !strings.Contains(err.Error(), "invalid tunnel") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

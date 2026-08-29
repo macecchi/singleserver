@@ -444,3 +444,55 @@ func TestPromptAddOptionsCollectsEnv(t *testing.T) {
 		t.Fatalf("expected env in the equivalent command:\n%s", out.String())
 	}
 }
+
+func TestAddOptionsPersistPrivateTunnel(t *testing.T) {
+	opts := addOptions{repo: "acme/scoreboard", tunnel: "private"}
+	app, entry, err := opts.app()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if app.Tunnel != "private" {
+		t.Fatalf("expected private tunnel on the runtime config, got %q", app.Tunnel)
+	}
+	if entry.tunnel != "private" {
+		t.Fatalf("expected private tunnel on the persisted entry, got %q", entry.tunnel)
+	}
+	// With no --domain the app is served at <name>.<tailnet>, so the host it
+	// gets a Tailscale Service for has to be recorded.
+	if len(app.Hosts) != 1 || app.Hosts[0] != "scoreboard" {
+		t.Fatalf("unexpected hosts: %#v", app.Hosts)
+	}
+	if len(entry.hosts) != 1 || entry.hosts[0] != "scoreboard" {
+		t.Fatalf("unexpected entry hosts: %#v", entry.hosts)
+	}
+
+	updated, err := appendAppToConfigYAML(nil, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "tunnel: private") {
+		t.Fatalf("expected tunnel to persist:\n%s", updated)
+	}
+}
+
+func TestAddOptionsDoNotPersistPublicTunnel(t *testing.T) {
+	opts := addOptions{repo: "acme/scoreboard", tunnel: "public"}
+	app, entry, err := opts.app()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Tunnel != "public" {
+		t.Fatalf("expected public tunnel, got %q", app.Tunnel)
+	}
+	if len(app.Hosts) != 0 {
+		t.Fatalf("public apps should not get an implied host: %#v", app.Hosts)
+	}
+	updated, err := appendAppToConfigYAML(nil, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(updated), "tunnel:") {
+		t.Fatalf("the default tunnel should stay out of the config:\n%s", updated)
+	}
+}

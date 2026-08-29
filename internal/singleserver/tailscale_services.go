@@ -197,20 +197,40 @@ func promptTailscaleOAuthClient(w io.Writer) (string, string, error) {
 	}
 }
 
+// tailscaleServiceNameForHost returns the Tailscale Service that serves hostname.
+//
+// The app is served at the service's MagicDNS name, so the service name must be
+// the first label of the host or the two never match. With no host at all the
+// app name is the service name, so the app is reachable at <name>.<tailnet>
+// either way.
+func tailscaleServiceNameForHost(hostname, appName string) string {
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return appName
+	}
+	if label, _, ok := strings.Cut(hostname, "."); ok && label != "" {
+		return label
+	}
+	return hostname
+}
+
+// tailscaleServiceName returns the Tailscale Service a private app is served as.
+// Only the first host matters: Normalize caps private apps at one domain.
+func tailscaleServiceName(app AppConfig) string {
+	host := ""
+	if len(app.Hosts) > 0 {
+		host = app.Hosts[0]
+	}
+	return tailscaleServiceNameForHost(host, app.Name)
+}
+
 func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Writer) error {
 	if !strings.Contains(hostname, ".") {
 		if domain := tailnetDomain(); domain != "" {
 			hostname = hostname + "." + domain
 		}
 	}
-	// The app is served at the service's MagicDNS name, so the service name
-	// must be the first label of the configured domain or the two never match.
-	// With no domain configured the app name is the service name, so the app
-	// is reachable at <name>.<tailnet> either way.
-	serviceName := app.Name
-	if label, _, ok := strings.Cut(hostname, "."); ok && label != "" {
-		serviceName = label
-	}
+	serviceName := tailscaleServiceNameForHost(hostname, app.Name)
 
 	state, err := loadTailscaleState()
 	if err != nil {

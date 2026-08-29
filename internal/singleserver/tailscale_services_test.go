@@ -125,3 +125,33 @@ func TestPromptTailscaleOAuthClient(t *testing.T) {
 		t.Fatalf("expected empty on skip, got %q, %v", id, err)
 	}
 }
+
+func TestTailscaleServiceNameDerivation(t *testing.T) {
+	cases := []struct {
+		name string
+		app  AppConfig
+		want string
+	}{
+		{"first label of the domain", AppConfig{Name: "scoreboard", Hosts: []string{"scores.corp.ts.net"}}, "scores"},
+		{"bare label domain", AppConfig{Name: "scoreboard", Hosts: []string{"scores"}}, "scores"},
+		{"app name without a domain", AppConfig{Name: "scoreboard"}, "scoreboard"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tailscaleServiceName(tc.app); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTailscaleServiceNameForHostFollowsTheHostBeingSynced(t *testing.T) {
+	// Removing one host must unserve the service that host resolves to, not the
+	// one the app's remaining config points at.
+	if got := tailscaleServiceNameForHost("scores.corp.ts.net", "scoreboard"); got != "scores" {
+		t.Fatalf("got %q, want %q", got, "scores")
+	}
+	if got := tailscaleServiceNameForHost("", "scoreboard"); got != "scoreboard" {
+		t.Fatalf("got %q, want %q", got, "scoreboard")
+	}
+}

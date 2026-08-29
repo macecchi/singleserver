@@ -125,6 +125,10 @@ func (a *AppConfig) Normalize() error {
 		}
 	}
 
+	if a.Tunnel != "public" && a.Tunnel != "private" {
+		return fmt.Errorf("invalid tunnel for %s: %q (expected public or private)", a.Repo, a.Tunnel)
+	}
+
 	if a.Tunnel == "private" && len(a.Hosts) > 1 {
 		return fmt.Errorf("private tailscale tunnel for %s supports at most one domain: %v", a.Repo, a.Hosts)
 	}
@@ -338,6 +342,7 @@ func (c *Config) Normalize() error {
 	seenRepos := map[string]bool{}
 	seenNames := map[string]string{}
 	seenHosts := map[string]string{}
+	seenServices := map[string]string{}
 	for i := range c.Apps {
 		if err := c.Apps[i].Normalize(); err != nil {
 			return err
@@ -360,6 +365,17 @@ func (c *Config) Normalize() error {
 				return fmt.Errorf("duplicate host in config: %s is used by %s and %s", host, existingRepo, c.Apps[i].Repo)
 			}
 			seenHosts[hostKey] = c.Apps[i].Repo
+		}
+
+		// Distinct hosts can still collapse to the same Tailscale Service name,
+		// which is only the first label of the host. Two apps sharing a service
+		// would fight over it, and removing either would delete it for both.
+		if c.Apps[i].Tunnel == "private" {
+			serviceKey := strings.ToLower(tailscaleServiceName(c.Apps[i]))
+			if existingRepo := seenServices[serviceKey]; existingRepo != "" {
+				return fmt.Errorf("duplicate tailscale service in config: %s and %s both resolve to svc:%s; give them distinct first domain labels", existingRepo, c.Apps[i].Repo, serviceKey)
+			}
+			seenServices[serviceKey] = c.Apps[i].Repo
 		}
 	}
 	return nil
