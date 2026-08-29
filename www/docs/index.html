@@ -577,25 +577,25 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
 
     <section id="private-tunnels">
         <h2>Private apps on Tailscale</h2>
-        <p>Not everything belongs on the internet. An app added with <code>--tunnel private</code> is served only to devices on your tailnet: no public DNS, no Cloudflare, no public IP anywhere in the path. Dashboards, personal tools, and staging apps get real HTTPS at a stable name that only your devices can reach.</p>
+        <p>Not everything belongs on the internet. An app added with <code>--tunnel private</code> gets real HTTPS at a name only your tailnet can reach: no public DNS, no Cloudflare, no public IP in the path.</p>
 
         <div class="code-wrapper">
             <pre class="code-block">singleserver add <span class="accent">https://github.com/owner/app</span> --tunnel private</pre>
         </div>
-        <p>That's the whole interface. The app comes up at <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, named after the app, or after the first label of the domain if you pass one, like <code>--domain app.tailnet-name.ts.net</code>. Private apps take at most one domain.</p>
+        <p>The app comes up at <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, named after the app, or after the first label of a <code>--domain</code> you pass. Private apps take at most one domain.</p>
 
         <h3 id="private-tunnels-how">How it works</h3>
-        <p>Each private app gets its own Tailscale node on the server. Single Server runs one extra <code>tailscaled</code> per app under a systemd template unit, <code>tailscaled-app@&lt;name&gt;</code>, using userspace networking so app nodes never touch the server's own routing. It registers the node with your stored auth key, and MagicDNS names it automatically: joining the tailnet as <code>app</code> <em>is</em> what creates <code>app.&lt;tailnet&gt;.ts.net</code>. There is no DNS step. Then <code>tailscale serve</code> terminates HTTPS on that node, with a certificate Tailscale provisions for it, and proxies requests to Kamal's proxy on loopback, which routes by hostname to the app's container. Deploys work exactly like public apps: push, build, healthcheck, swap.</p>
-        <p>Removing the app, or its domain, stops the node's service and deletes its state. The machine entry lingers in the Tailscale admin console until you delete it there, and it holds its name while it does: a new node registering the same name becomes <code>name-1</code> until the old machine is deleted.</p>
+        <p>Each private app is its own Tailscale node: one extra <code>tailscaled</code> per app, run as <code>tailscaled-app@&lt;name&gt;</code> with userspace networking, registered with your stored auth key. There is no DNS step; joining the tailnet as <code>app</code> <em>is</em> what creates <code>app.&lt;tailnet&gt;.ts.net</code>. <code>tailscale serve</code> terminates HTTPS on the node and hands requests to Kamal's proxy on loopback, which routes by hostname to the container. Deploys work exactly like public apps.</p>
+        <p>Removing the app or its domain stops the node and deletes its state. Also delete the machine in the Tailscale admin console: until then it holds the name, and a new node registering it becomes <code>name-1</code>.</p>
 
         <h3 id="private-tunnels-prep">One-time tailnet setup</h3>
-        <p>Registering nodes needs an auth key, and three settings in the <a href="https://login.tailscale.com/admin">Tailscale admin console</a> make those keys behave. You do this once per tailnet, not per app or per server.</p>
+        <p>Three things in the <a href="https://login.tailscale.com/admin">Tailscale admin console</a>, once per tailnet:</p>
         <ul class="settings-list">
             <li><strong>MagicDNS and HTTPS certificates</strong><span class="default">DNS page</span> Both on. MagicDNS names the nodes; the certificates setting lets <code>tailscale serve</code> mint TLS certs for them.</li>
-            <li><strong>A tag for app nodes</strong><span class="default">Access controls</span> Add <code>"tagOwners": {"tag:singleserver": ["autogroup:admin"]}</code> to the policy. Tagged nodes have no human owner and, crucially, their node keys never expire, so app nodes stay online without anyone clicking anything. If you write custom ACLs, allow your devices to reach <code>tag:singleserver:443</code>.</li>
-            <li><strong>The auth key</strong><span class="default">Settings &rarr; Keys</span> Generate an auth key that is <strong>reusable</strong>, <strong>pre-authorized</strong>, and carries <code>tag:singleserver</code>, with the longest expiry offered. Store it on the server with <code>singleserver connect tailscale --auth-key tskey-auth-...</code>; every private app reuses it from there.</li>
+            <li><strong>A tag for app nodes</strong><span class="default">Access controls</span> The Access controls tab shows your tailnet policy file, a JSON document. Add <code>"tagOwners": {"tag:singleserver": ["autogroup:admin"]}</code> as a top-level entry and save. Tagged nodes never expire, so apps stay online without anyone clicking anything. If the file has custom ACL rules, also allow your devices to reach <code>tag:singleserver:443</code>.</li>
+            <li><strong>The auth key</strong><span class="default">Settings &rarr; Keys</span> Generate a reusable, pre-authorized key tagged <code>tag:singleserver</code>, longest expiry. Store it with <code>singleserver connect tailscale --auth-key tskey-auth-...</code>; every private app reuses it.</li>
         </ul>
-        <p>One honest caveat: Tailscale caps auth key expiry at 90 days, with no non-expiring option. Running apps are unaffected when the key lapses, since their tagged nodes never expire, but adding a <em>new</em> private app will fail until you paste a fresh key with <code>connect tailscale --auth-key</code>. Same page, same checkboxes, one command.</p>
+        <p>Auth keys expire after at most 90 days, and there is no non-expiring option. Running apps don't care, but adding a <em>new</em> private app after that fails until you paste a fresh key with <code>connect tailscale --auth-key</code>.</p>
     </section>
 
     <section id="contract">
