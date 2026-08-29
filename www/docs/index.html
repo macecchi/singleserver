@@ -53,6 +53,7 @@
             <a href="#deploys">What a push does</a>
             <a href="#commands">Commands</a>
             <a href="#config">Configuration</a>
+            <a href="#private-tunnels">Private apps</a>
             <a href="#contract">The app contract</a>
             <a href="#files">Files on your server</a>
             <a href="#troubleshooting">When something breaks</a>
@@ -130,7 +131,7 @@
             </div>
             <div>
                 <strong>Tailscale is the private way in.</strong>
-                <p>Tailscale SSH gets you into the box without exposing SSH to the public internet. Tailscale Funnel gives GitHub a public URL to reach the daemon's webhook endpoint, so the server itself never needs a domain name or a DNS record.</p>
+                <p>Tailscale SSH gets you into the box without exposing SSH to the public internet. Tailscale Funnel gives GitHub a public URL to reach the daemon's webhook endpoint, so the server itself never needs a domain name or a DNS record. And apps added with <code>--tunnel private</code> are served only to your tailnet, each on its own Tailscale node — see <a href="#private-tunnels">Private apps on Tailscale</a>.</p>
             </div>
             <div>
                 <strong>Cloudflare is the public way in.</strong>
@@ -305,7 +306,8 @@ singleserver connect github</pre>
                 </div>
                 <p>Adds a repository, verifies the GitHub App can reach it, writes the entry to <code>apps.yml</code>, wires up any domains, stores any environment variables you set, deploys the current branch tip, and runs doctor. In an interactive session it asks only the questions it cannot answer itself, then prints the equivalent flag-based command with <code>--non-interactive</code>. Environment variables are written before that first deploy, so an app that reads a required secret at boot starts cleanly the first time.</p>
                 <ul class="option-list">
-                    <li><code>--domain &lt;host&gt;</code><span>Public hostname for the app, like <code>app.example.com</code>. Repeat the flag for more than one.</span></li>
+                    <li><code>--domain &lt;host&gt;</code><span>Public hostname for the app, like <code>app.example.com</code>. Repeat the flag for more than one. For private apps, a tailnet hostname like <code>app.tailnet-name.ts.net</code>, at most one.</span></li>
+                    <li><code>--tunnel public|private</code> <span class="opt-badge">Default: public</span><span>Where the app is reachable: <code>public</code> serves it to the internet through Cloudflare, <code>private</code> serves it only to your tailnet through Tailscale. See <a href="#private-tunnels">Private apps on Tailscale</a>.</span></li>
                     <li><code>--branch &lt;name&gt;</code> <span class="opt-badge">Default: repo default branch</span><span>Deploy only pushes to this branch.</span></li>
                     <li><code>--name &lt;app&gt;</code> <span class="opt-badge">Default: repo name, lowercased</span><span>Override the app name. Names must be unique on the server.</span></li>
                     <li><code>--runtime static|node|bun</code> <span class="opt-badge req">Required without a Dockerfile</span><span>Generate a temporary Dockerfile during deploys. Repos with their own Dockerfile must omit this.</span></li>
@@ -420,7 +422,7 @@ singleserver domains remove &lt;app&gt; &lt;domain&gt; [--no-deploy] [--non-inte
 singleserver domains list [app]
 singleserver domains verify [app]</pre>
                 </div>
-                <p>Attaches and detaches public hostnames. <code>add</code> finds the Cloudflare zone that owns the hostname, writes a proxied CNAME to your tunnel, adds the tunnel route, and redeploys the app so Kamal routes the new host. <code>remove</code> undoes all of that.</p>
+                <p>Attaches and detaches hostnames. For public apps, <code>add</code> finds the Cloudflare zone that owns the hostname, writes a proxied CNAME to your tunnel, adds the tunnel route, and redeploys the app so Kamal routes the new host. For private apps, or any hostname ending in <code>.ts.net</code>, it provisions a Tailscale node for the app instead (see <a href="#private-tunnels">Private apps on Tailscale</a>). <code>remove</code> undoes all of that.</p>
                 <ul class="option-list">
                     <li><code>--no-deploy</code><span>Update config and DNS without redeploying the app yet.</span></li>
                     <li><code>--non-interactive</code><span>Never prompt. App and domain must be supplied for add/remove.</span></li>
@@ -571,6 +573,29 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <li><strong>Healthcheck</strong><span class="default">Poll the healthcheck path every second, 1s timeout.</span> Tight intervals keep zero-downtime swaps fast for small apps.</li>
             <li><strong>Timeouts</strong><span class="default">Deploy 10s, drain 1s.</span> Tuned for small containers that boot fast. A repo-level <code>config/deploy.yml</code> is the escape hatch for apps that need different numbers.</li>
         </ul>
+    </section>
+
+    <section id="private-tunnels">
+        <h2>Private apps on Tailscale</h2>
+        <p>Not everything belongs on the internet. An app added with <code>--tunnel private</code> is served only to devices on your tailnet: no public DNS, no Cloudflare, no public IP anywhere in the path. Dashboards, personal tools, and staging apps get real HTTPS at a stable name that only your devices can reach.</p>
+
+        <div class="code-wrapper">
+            <pre class="code-block">singleserver add <span class="accent">https://github.com/owner/app</span> --tunnel private</pre>
+        </div>
+        <p>That's the whole interface. The app comes up at <code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>, named after the app, or after the first label of the domain if you pass one, like <code>--domain app.tailnet-name.ts.net</code>. Private apps take at most one domain.</p>
+
+        <h3 id="private-tunnels-how">How it works</h3>
+        <p>Each private app gets its own Tailscale node on the server. Single Server runs one extra <code>tailscaled</code> per app under a systemd template unit, <code>tailscaled-app@&lt;name&gt;</code>, using userspace networking so app nodes never touch the server's own routing. It registers the node with your stored auth key, and MagicDNS names it automatically: joining the tailnet as <code>app</code> <em>is</em> what creates <code>app.&lt;tailnet&gt;.ts.net</code>. There is no DNS step. Then <code>tailscale serve</code> terminates HTTPS on that node, with a certificate Tailscale provisions for it, and proxies requests to Kamal's proxy on loopback, which routes by hostname to the app's container. Deploys work exactly like public apps: push, build, healthcheck, swap.</p>
+        <p>Removing the app, or its domain, stops the node's service and deletes its state. The machine entry lingers in the Tailscale admin console until you delete it there, and it holds its name while it does: a new node registering the same name becomes <code>name-1</code> until the old machine is deleted.</p>
+
+        <h3 id="private-tunnels-prep">One-time tailnet setup</h3>
+        <p>Registering nodes needs an auth key, and three settings in the <a href="https://login.tailscale.com/admin">Tailscale admin console</a> make those keys behave. You do this once per tailnet, not per app or per server.</p>
+        <ul class="settings-list">
+            <li><strong>MagicDNS and HTTPS certificates</strong><span class="default">DNS page</span> Both on. MagicDNS names the nodes; the certificates setting lets <code>tailscale serve</code> mint TLS certs for them.</li>
+            <li><strong>A tag for app nodes</strong><span class="default">Access controls</span> Add <code>"tagOwners": {"tag:singleserver": ["autogroup:admin"]}</code> to the policy. Tagged nodes have no human owner and, crucially, their node keys never expire, so app nodes stay online without anyone clicking anything. If you write custom ACLs, allow your devices to reach <code>tag:singleserver:443</code>.</li>
+            <li><strong>The auth key</strong><span class="default">Settings &rarr; Keys</span> Generate an auth key that is <strong>reusable</strong>, <strong>pre-authorized</strong>, and carries <code>tag:singleserver</code>, with the longest expiry offered. Store it on the server with <code>singleserver connect tailscale --auth-key tskey-auth-...</code>; every private app reuses it from there.</li>
+        </ul>
+        <p>One honest caveat: Tailscale caps auth key expiry at 90 days, with no non-expiring option. Running apps are unaffected when the key lapses, since their tagged nodes never expire, but adding a <em>new</em> private app will fail until you paste a fresh key with <code>connect tailscale --auth-key</code>. Same page, same checkboxes, one command.</p>
     </section>
 
     <section id="contract">
