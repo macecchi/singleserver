@@ -367,7 +367,12 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 		return errors.New("Tailscale auth key is required to configure private tunnels; run `singleserver connect tailscale --auth-key <key>` first or set TAILSCALE_AUTHKEY in singleserver.env")
 	}
 
+	// The app is served at the node's own MagicDNS name, so the node hostname
+	// must be the first label of the configured domain or the two never match.
 	appNodeName := "singleserver-" + app.Name
+	if label, _, ok := strings.Cut(hostname, "."); ok && label != "" {
+		appNodeName = label
+	}
 	socketPath := fmt.Sprintf("/run/tailscaled-%s.sock", app.Name)
 	stateDir := fmt.Sprintf("/var/lib/tailscale/tailscaled-%s", app.Name)
 
