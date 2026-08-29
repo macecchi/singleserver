@@ -369,7 +369,9 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 
 	// The app is served at the node's own MagicDNS name, so the node hostname
 	// must be the first label of the configured domain or the two never match.
-	appNodeName := "singleserver-" + app.Name
+	// With no domain configured the app name is the hostname, so the app is
+	// reachable at <name>.<tailnet> either way.
+	appNodeName := app.Name
 	if label, _, ok := strings.Cut(hostname, "."); ok && label != "" {
 		appNodeName = label
 	}
@@ -402,10 +404,6 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 		upArgs := []string{
 			"--socket=" + socketPath,
 			"up",
-			// Reused or pre-existing node state can hold non-default prefs,
-			// which make `tailscale up` refuse to run unless every one is
-			// restated. --reset keeps this automation deterministic.
-			"--reset",
 			"--ssh",
 			"--auth-key=" + authKey,
 			"--hostname=" + appNodeName,
