@@ -299,8 +299,12 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 
 func unserveTailscaleService(appName, serviceName string, w io.Writer) error {
 	writeCheck(w, appName, "tailscale_serve", "stopping", "svc:"+serviceName)
+	// Best effort: older tailscale clients have no `serve drain`, and draining is
+	// only a courtesy to in-flight requests. Turning the service off is not.
 	_ = commandRunFunc(30*time.Second, "tailscale", "serve", "drain", "svc:"+serviceName)
-	_ = commandRunFunc(30*time.Second, "tailscale", "serve", "--service=svc:"+serviceName, "--https=443", "off")
+	if err := commandRunFunc(30*time.Second, "tailscale", "serve", "--service=svc:"+serviceName, "--https=443", "off"); err != nil {
+		return fmt.Errorf("failed to stop serving svc:%s; this host may still serve it, run `tailscale serve --service=svc:%s --https=443 off`: %w", serviceName, serviceName, err)
+	}
 	return nil
 }
 

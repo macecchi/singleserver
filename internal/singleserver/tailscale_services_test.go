@@ -3,10 +3,12 @@ package singleserver
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func withFakeTailscaleAPI(t *testing.T, handler http.HandlerFunc) {
@@ -153,5 +155,86 @@ func TestTailscaleServiceNameForHostFollowsTheHostBeingSynced(t *testing.T) {
 	}
 	if got := tailscaleServiceNameForHost("", "scoreboard"); got != "scoreboard" {
 		t.Fatalf("got %q, want %q", got, "scoreboard")
+	}
+}
+
+// stubTailscaleServeCommands records every `tailscale serve` invocation and
+// fails the ones whose arguments contain any of failOn.
+func stubTailscaleServeCommands(t *testing.T, failOn ...string) *[][]string {
+	t.Helper()
+	original := commandRunFunc
+	t.Cleanup(func() { commandRunFunc = original })
+	calls := &[][]string{}
+	commandRunFunc = func(timeout time.Duration, name string, args ...string) error {
+		if name != "tailscale" {
+			return nil
+		}
+		*calls = append(*calls, args)
+		joined := strings.Join(args, " ")
+		for _, fail := range failOn {
+			if strings.Contains(joined, fail) {
+				return fmt.Errorf("tailscale %s: exit status 1", joined)
+			}
+		}
+		return nil
+	}
+	return calls
+}
+
+func TestUnserveTailscaleServiceReportsFailureToStopServing(t *testing.T) {
+	// A failed `serve ... off` leaves this host serving the service. Reporting
+	// success there would let removal delete the app config while the tailnet
+	// still routes to a service nothing cleans up afterwards.
+	calls := stubTailscaleServeCommands(t, "off")
+
+	var out bytes.Buffer
+	err := unserveTailscaleService("scoreboard", "scores", &out)
+	if err == nil {
+		t.Fatal("expected an error when `tailscale serve ... off` fails")
+	}
+	for _, want := range []string{"svc:scores", "may still serve it"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to mention %q, got: %v", want, err)
+		}
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("expected drain then off, got %+v", *calls)
+	}
+}
+
+func TestUnserveTailscaleServiceToleratesDrainFailure(t *testing.T) {
+	// `serve drain` does not exist on older tailscale clients, so its failure
+	// must not block removal as long as the service is actually turned off.
+	calls := stubTailscaleServeCommands(t, "drain")
+
+	var out bytes.Buffer
+	if err := unserveTailscaleService("scoreboard", "scores", &out); err != nil {
+		t.Fatalf("expected a failed drain to be tolerated, got: %v", err)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("expected off to run after a failed drain, got %+v", *calls)
+	}
+	if joined := strings.Join((*calls)[1], " "); !strings.Contains(joined, "off") {
+		t.Fatalf("expected the second call to turn the service off, got %q", joined)
+	}
+}
+
+func TestSyncTailscaleAppDomainRemovalFailsWhenServiceKeepsServing(t *testing.T) {
+	// The no-OAuth removal path deliberately keeps the VIP service, so stopping
+	// the local serve config is the only thing that takes the app off the
+	// tailnet. If that fails, removal must not report success.
+	t.Setenv("SINGLESERVER_STATE_DIR", t.TempDir())
+	t.Setenv("TAILSCALE_OAUTH_CLIENT_ID", "")
+	t.Setenv("TAILSCALE_OAUTH_CLIENT_SECRET", "")
+	stubTailscaleServeCommands(t, "off")
+
+	app := AppConfig{Name: "scoreboard", Hosts: []string{"scores.corp.ts.net"}, Tunnel: "private"}
+	var out bytes.Buffer
+	err := syncTailscaleAppDomain(app, "scores.corp.ts.net", false, &out)
+	if err == nil {
+		t.Fatalf("expected removal to fail when the service keeps serving, output:\n%s", out.String())
+	}
+	if !strings.Contains(err.Error(), "svc:scores") {
+		t.Fatalf("expected the error to name the service, got: %v", err)
 	}
 }
