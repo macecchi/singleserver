@@ -36,3 +36,35 @@ func TestDoctorTailscaleKeyExpiry(t *testing.T) {
 		t.Fatalf("expected admin deep link, got: %q", linkBuf.String())
 	}
 }
+
+func TestReportTailscaleAuthKeyAge(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	stored := func(daysAgo int) string {
+		return now.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+	}
+
+	var fresh strings.Builder
+	reportTailscaleAuthKeyAge(&fresh, &TailscaleState{AuthKey: "k", AuthKeyStoredAt: stored(10)}, now)
+	if !strings.Contains(fresh.String(), "ok") || !strings.Contains(fresh.String(), "stored 10d ago") {
+		t.Fatalf("expected ok for a fresh key, got: %q", fresh.String())
+	}
+
+	var aging strings.Builder
+	reportTailscaleAuthKeyAge(&aging, &TailscaleState{AuthKey: "k", AuthKeyStoredAt: stored(80)}, now)
+	if !strings.Contains(aging.String(), "pending") || !strings.Contains(aging.String(), "expires by day 90") {
+		t.Fatalf("expected pending for an aging key, got: %q", aging.String())
+	}
+
+	var expired strings.Builder
+	reportTailscaleAuthKeyAge(&expired, &TailscaleState{AuthKey: "k", AuthKeyStoredAt: stored(120)}, now)
+	if !strings.Contains(expired.String(), "past the 90-day cap") {
+		t.Fatalf("expected expired warning, got: %q", expired.String())
+	}
+
+	var silent strings.Builder
+	reportTailscaleAuthKeyAge(&silent, &TailscaleState{}, now)
+	reportTailscaleAuthKeyAge(&silent, &TailscaleState{AuthKey: "k"}, now)
+	if silent.String() != "" {
+		t.Fatalf("expected no output without a dated key, got: %q", silent.String())
+	}
+}

@@ -595,7 +595,7 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <li><strong>A tag for app nodes</strong><span class="default">Access controls &rarr; JSON editor</span> This is your tailnet policy file. Add <code>"tagOwners": {"tag:singleserver": ["autogroup:admin"]}</code> as a top-level entry and save. Tagged nodes never expire, so apps stay online without anyone clicking anything. If the file has custom ACL rules, also allow your devices to reach <code>tag:singleserver:443</code>.</li>
             <li><strong>The auth key</strong><span class="default">Settings &rarr; Keys &rarr; Generate auth key</span> Reusable <em>on</em>, expiration <em>90 days</em>, ephemeral <em>off</em>, tags <em>on</em> with <code>tag:singleserver</code>. If your tailnet uses device approval, also turn pre-approved on. Store the key with <code>singleserver connect tailscale --auth-key tskey-auth-...</code>; every private app reuses it.</li>
         </ul>
-        <p>Auth keys expire after at most 90 days, and there is no non-expiring option. Running apps don't care, but adding a <em>new</em> private app after that fails until you paste a fresh key with <code>connect tailscale --auth-key</code>.</p>
+        <p>Auth keys expire after at most 90 days, and there is no non-expiring option. Running apps don't care, but adding a <em>new</em> private app after that fails until you paste a fresh key with <code>connect tailscale --auth-key</code>. <code>doctor</code> tracks the stored key's age and warns as it approaches the cap.</p>
     </section>
 
     <section id="contract">
