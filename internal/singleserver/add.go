@@ -761,6 +761,9 @@ func (e addAppEntry) yamlNode() *yaml.Node {
 		}
 		appendNodePair(node, "hosts", hostNode)
 	}
+	if e.tunnel != "" && e.tunnel != "public" {
+		appendScalarPair(node, "tunnel", e.tunnel)
+	}
 	if e.healthcheck != "" {
 		appendScalarPair(node, "healthcheck", e.healthcheck)
 	}

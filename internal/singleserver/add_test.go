@@ -427,7 +427,7 @@ func TestPromptAddOptionsCollectsEnv(t *testing.T) {
 		"n",                     // deploy now?
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := promptAddOptions(addOptions{repo: "acme/app"}, strings.NewReader(input), &out, addPromptContext{
+	got, err := promptAddOptions(addOptions{repo: "acme/app", tunnel: "public"}, strings.NewReader(input), &out, addPromptContext{
 		hasDockerfile: true,
 		targetBranch:  "main",
 	})
