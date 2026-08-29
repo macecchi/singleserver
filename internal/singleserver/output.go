@@ -57,6 +57,7 @@ type AppView struct {
 	Repo   string      `json:"repo,omitempty"`
 	Branch string      `json:"branch,omitempty"`
 	Hosts  []string    `json:"hosts,omitempty"`
+	Tunnel string      `json:"tunnel,omitempty"`
 	State  string      `json:"state"`
 	Deploy *DeployView `json:"deploy,omitempty"`
 	Health *HealthView `json:"health,omitempty"`
@@ -240,6 +241,7 @@ func (o *Output) renderList() {
 		cell("APP", bold("APP")),
 		cell("STATUS", bold("STATUS")),
 		cell("DOMAIN", bold("DOMAIN")),
+		cell("TUNNEL", bold("TUNNEL")),
 		cell("REPO", bold("REPO")),
 	}}
 	for _, a := range o.apps {
@@ -248,6 +250,7 @@ func (o *Output) renderList() {
 			plainCell(a.Name),
 			cell("● "+a.State, paint(stateColor(st), "● "+a.State)),
 			domainCell(a.Hosts),
+			tunnelCell(a.Tunnel),
 			repoCell(a.Repo, a.Branch),
 		})
 	}
@@ -279,6 +282,11 @@ func (o *Output) renderStatus() {
 	for _, a := range o.apps {
 		fmt.Fprintln(o.w)
 		fmt.Fprintf(o.w, "%s %s%s%s\n", dot(wordState(a.State)), bold(a.Name), strings.Repeat(" ", nameWidth-len(a.Name)+3), dim(a.State))
+		if a.Tunnel != "" {
+			// No status mark: the tunnel is a setting, not a check. The extra
+			// spaces stand in for one so the detail text stays in line.
+			fmt.Fprintf(o.w, "    %s     %s\n", dim("tunnel"), a.Tunnel)
+		}
 		if a.Deploy != nil {
 			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("deploy"), mark(wordState(a.Deploy.State)), a.Deploy.Detail)
 		}
@@ -355,6 +363,19 @@ func domainCell(hosts []string) tcell {
 	}
 	extra := fmt.Sprintf(" +%d", len(hosts)-1)
 	return cell(hosts[0]+extra, hosts[0]+dim(extra))
+}
+
+// tunnelCell shows how the app is reached. Public is the default, so it is
+// dimmed and private is left to stand out.
+func tunnelCell(tunnel string) tcell {
+	switch tunnel {
+	case "":
+		return cell("–", dim("–"))
+	case "private":
+		return plainCell(tunnel)
+	default:
+		return cell(tunnel, dim(tunnel))
+	}
 }
 
 func repoCell(repo, branch string) tcell {

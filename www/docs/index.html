@@ -378,7 +378,7 @@ singleserver connect github</pre>
                 <div class="code-wrapper">
                     <pre class="code-block">singleserver list</pre>
                 </div>
-                <p>One line per app: repo, branch, domains, current state, and healthcheck setting.</p>
+                <p>One line per app: repo, branch, domains, whether the app is served <code>public</code> or <code>private</code>, and its current state.</p>
             </div>
 
             <div class="command" id="cmd-status">
@@ -386,7 +386,7 @@ singleserver connect github</pre>
                 <div class="code-wrapper">
                     <pre class="code-block">singleserver status</pre>
                 </div>
-                <p>The quick operational view: daemon health, then each app's running container, last deploy outcome, and external healthcheck result.</p>
+                <p>The quick operational view: daemon health, then each app's running container, whether it is served <code>public</code> or <code>private</code>, last deploy outcome, and external healthcheck result.</p>
             </div>
 
             <div class="command" id="cmd-logs">
