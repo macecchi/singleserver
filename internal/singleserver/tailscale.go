@@ -20,7 +20,7 @@ type TailscaleState struct {
 	Hostname        string `json:"hostname"`
 	FunnelURL       string `json:"funnel_url"`
 	AuthKey         string `json:"auth_key,omitempty"`
-	AuthKeyStoredAt string `json:"auth_key_stored_at,omitempty"`
+	AuthKeyFailedAt string `json:"auth_key_failed_at,omitempty"`
 }
 
 type tailscaleSelf struct {
@@ -206,50 +206,65 @@ func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string, au
 	if authKey == "" && existing != nil {
 		authKey = existing.AuthKey
 	}
-	// Tailscale auth keys expire at most 90 days after creation and expose no
-	// way to query their expiry, so remember when this one was stored and let
-	// doctor age it against that cap.
-	storedAt := time.Now().UTC().Format(time.RFC3339)
-	if existing != nil && authKey == existing.AuthKey && existing.AuthKeyStoredAt != "" {
-		storedAt = existing.AuthKeyStoredAt
-	}
-	if authKey == "" {
-		storedAt = ""
+	failedAt := ""
+	if existing != nil && authKey == existing.AuthKey {
+		failedAt = existing.AuthKeyFailedAt
 	}
 	state := &TailscaleState{
 		Hostname:        tailscaleStatusName(status),
 		FunnelURL:       strings.TrimRight(funnelURL, "/"),
 		AuthKey:         authKey,
-		AuthKeyStoredAt: storedAt,
+		AuthKeyFailedAt: failedAt,
 	}
 	return writeTailscaleState(state)
 }
 
-// reportTailscaleAuthKeyAge warns when the stored auth key is old enough that
-// Tailscale's 90-day cap has plausibly killed it. Running apps keep working
-// regardless; only registering a new private app needs a live key.
-func reportTailscaleAuthKeyAge(w io.Writer, state *TailscaleState, now time.Time) {
-	if state == nil || state.AuthKey == "" || state.AuthKeyStoredAt == "" {
+// tailscaleAuthErr reports whether a `tailscale up` failure looks like the
+// auth key being rejected, as opposed to a network or daemon problem.
+func tailscaleAuthErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	for _, marker := range []string{"invalid key", "key expired", "key has expired", "unauthorized"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// markTailscaleAuthKeyFailed records that the stored auth key was rejected, so
+// doctor can report a fact instead of a guess. Cleared when a key works again.
+func markTailscaleAuthKeyFailed(failed bool) {
+	state, err := loadTailscaleState()
+	if err != nil || state.AuthKey == "" {
 		return
 	}
-	storedAt, err := time.Parse(time.RFC3339, state.AuthKeyStoredAt)
-	if err != nil {
+	failedAt := ""
+	if failed {
+		failedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if state.AuthKeyFailedAt == failedAt {
 		return
 	}
-	days := int(now.Sub(storedAt).Hours() / 24)
-	hint := "store a fresh key with `singleserver connect tailscale --auth-key <key>`"
-	switch {
-	case days >= 90:
-		writeCheck(w, "tailscale", "auth key", "pending",
-			fmt.Sprintf("stored %dd ago, past the 90-day cap", days),
-			"adding a new private app will fail; "+hint)
-	case days >= 75:
-		writeCheck(w, "tailscale", "auth key", "pending",
-			fmt.Sprintf("stored %dd ago, expires by day 90", days), hint)
-	default:
-		writeCheck(w, "tailscale", "auth key", "ok",
-			fmt.Sprintf("stored %dd ago (keys last at most 90d)", days))
+	state.AuthKeyFailedAt = failedAt
+	_ = writeTailscaleState(state)
+}
+
+// reportTailscaleAuthKeyStatus surfaces a known-bad auth key. Silent unless a
+// registration actually failed with it: auth keys expose no expiry to query,
+// and running apps keep working regardless, so there is nothing to predict.
+func reportTailscaleAuthKeyStatus(w io.Writer, state *TailscaleState) {
+	if state == nil || state.AuthKey == "" || state.AuthKeyFailedAt == "" {
+		return
 	}
+	detail := "rejected"
+	if failedAt, err := time.Parse(time.RFC3339, state.AuthKeyFailedAt); err == nil {
+		detail = "rejected " + failedAt.Format("2006-01-02")
+	}
+	writeCheck(w, "tailscale", "auth key", "failed", detail,
+		"the stored key no longer registers nodes (they expire after at most 90 days); store a fresh one with `singleserver connect tailscale --auth-key <key>`")
 }
 
 func loadTailscaleState() (*TailscaleState, error) {
@@ -316,7 +331,7 @@ func doctorTailscale(w io.Writer, appCount int) bool {
 	writeCheck(w, "tailscale", "status", "ok", tailscaleStatusName(status))
 	reportTailscaleKeyExpiry(w, status)
 	if state, err := loadTailscaleState(); err == nil {
-		reportTailscaleAuthKeyAge(w, state, time.Now())
+		reportTailscaleAuthKeyStatus(w, state)
 	}
 
 	env, _ := loadServiceEnv()
@@ -451,8 +466,13 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 			"--hostname=" + appNodeName,
 		}
 		if err := commandRunFunc(2*time.Minute, "tailscale", upArgs...); err != nil {
-			return fmt.Errorf("failed to tailscale up for %s (auth keys expire after at most 90 days; if the stored key is old, store a fresh one with `singleserver connect tailscale --auth-key <key>`): %w", app.Name, err)
+			if tailscaleAuthErr(err) {
+				markTailscaleAuthKeyFailed(true)
+				return fmt.Errorf("failed to tailscale up for %s: the auth key was rejected (keys expire after at most 90 days); store a fresh one with `singleserver connect tailscale --auth-key <key>`: %w", app.Name, err)
+			}
+			return fmt.Errorf("failed to tailscale up for %s: %w", app.Name, err)
 		}
+		markTailscaleAuthKeyFailed(false)
 
 		// 5. Run serve
 		writeCheck(w, app.Name, "tailscale_serve", "configuring", "target=127.0.0.1:80")

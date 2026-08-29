@@ -2,6 +2,7 @@ package singleserver
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -37,34 +38,30 @@ func TestDoctorTailscaleKeyExpiry(t *testing.T) {
 	}
 }
 
-func TestReportTailscaleAuthKeyAge(t *testing.T) {
-	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	stored := func(daysAgo int) string {
-		return now.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
-	}
-
-	var fresh strings.Builder
-	reportTailscaleAuthKeyAge(&fresh, &TailscaleState{AuthKey: "k", AuthKeyStoredAt: stored(10)}, now)
-	if !strings.Contains(fresh.String(), "ok") || !strings.Contains(fresh.String(), "stored 10d ago") {
-		t.Fatalf("expected ok for a fresh key, got: %q", fresh.String())
-	}
-
-	var aging strings.Builder
-	reportTailscaleAuthKeyAge(&aging, &TailscaleState{AuthKey: "k", AuthKeyStoredAt: stored(80)}, now)
-	if !strings.Contains(aging.String(), "pending") || !strings.Contains(aging.String(), "expires by day 90") {
-		t.Fatalf("expected pending for an aging key, got: %q", aging.String())
-	}
-
-	var expired strings.Builder
-	reportTailscaleAuthKeyAge(&expired, &TailscaleState{AuthKey: "k", AuthKeyStoredAt: stored(120)}, now)
-	if !strings.Contains(expired.String(), "past the 90-day cap") {
-		t.Fatalf("expected expired warning, got: %q", expired.String())
-	}
-
+func TestReportTailscaleAuthKeyStatus(t *testing.T) {
 	var silent strings.Builder
-	reportTailscaleAuthKeyAge(&silent, &TailscaleState{}, now)
-	reportTailscaleAuthKeyAge(&silent, &TailscaleState{AuthKey: "k"}, now)
+	reportTailscaleAuthKeyStatus(&silent, &TailscaleState{AuthKey: "k"})
+	reportTailscaleAuthKeyStatus(&silent, &TailscaleState{AuthKeyFailedAt: "2026-08-01T00:00:00Z"})
 	if silent.String() != "" {
-		t.Fatalf("expected no output without a dated key, got: %q", silent.String())
+		t.Fatalf("expected silence without a known failure, got: %q", silent.String())
+	}
+
+	var failed strings.Builder
+	reportTailscaleAuthKeyStatus(&failed, &TailscaleState{AuthKey: "k", AuthKeyFailedAt: "2026-08-01T00:00:00Z"})
+	out := failed.String()
+	if !strings.Contains(out, "failed") || !strings.Contains(out, "rejected 2026-08-01") {
+		t.Fatalf("expected failure report, got: %q", out)
+	}
+}
+
+func TestTailscaleAuthErr(t *testing.T) {
+	if !tailscaleAuthErr(errors.New("backend error: invalid key: unable to validate API key")) {
+		t.Fatal("expected invalid key to be an auth error")
+	}
+	if tailscaleAuthErr(errors.New("dial tcp: connection refused")) {
+		t.Fatal("expected network error not to be an auth error")
+	}
+	if tailscaleAuthErr(nil) {
+		t.Fatal("expected nil not to be an auth error")
 	}
 }
