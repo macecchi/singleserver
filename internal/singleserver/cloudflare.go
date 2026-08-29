@@ -550,7 +550,7 @@ func dnsLabelFromAppName(appName string) string {
 }
 
 func syncAppDomain(app AppConfig, hostname string, add bool, w io.Writer) error {
-	if app.Tunnel == "private" || strings.HasSuffix(strings.ToLower(hostname), ".ts.net") {
+	if app.IsPrivate() {
 		return syncTailscaleAppDomain(app, hostname, add, w)
 	}
 	return syncCloudflareAppDomain(hostname, add, w)

@@ -364,3 +364,41 @@ func TestDomainsVerifyUsesCommandRunFuncForResolverDNS(t *testing.T) {
 		t.Fatalf("expected resolver DNS failure output, got:\n%s", out.String())
 	}
 }
+
+func TestDomainsAddRejectsTailnetDomainOnPublicApp(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps.yml")
+	t.Setenv("SINGLESERVER_CONFIG", configPath)
+	if err := os.WriteFile(configPath, []byte(`apps:
+  - repo: acme/scoreboard
+    hosts:
+      - play.example.com
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	originalSync := syncAppDomainFunc
+	t.Cleanup(func() { syncAppDomainFunc = originalSync })
+	syncAppDomainFunc = func(app AppConfig, hostname string, add bool, w io.Writer) error {
+		t.Fatalf("expected the domain to be rejected before syncing %s", hostname)
+		return nil
+	}
+
+	var out bytes.Buffer
+	logger := log.New(io.Discard, "", 0)
+	err := cliDomains([]string{"add", "scoreboard", "scores.corp.ts.net", "--no-deploy"}, &out, logger)
+	if err == nil {
+		t.Fatal("expected a tailnet domain on a public app to be rejected")
+	}
+	if !strings.Contains(err.Error(), "tailnet domain") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	config, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Apps[0].Hosts) != 1 {
+		t.Fatalf("expected the config left alone, got %#v", config.Apps[0].Hosts)
+	}
+}

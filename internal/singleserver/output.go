@@ -57,7 +57,7 @@ type AppView struct {
 	Repo   string      `json:"repo,omitempty"`
 	Branch string      `json:"branch,omitempty"`
 	Hosts  []string    `json:"hosts,omitempty"`
-	Tunnel string      `json:"tunnel,omitempty"`
+	Tunnel Tunnel      `json:"tunnel,omitempty"`
 	Commit string      `json:"commit,omitempty"`
 	State  string      `json:"state"`
 	Deploy *DeployView `json:"deploy,omitempty"`
@@ -286,8 +286,7 @@ func (o *Output) renderStatus() {
 		fmt.Fprintln(o.w)
 		fmt.Fprintf(o.w, "%s %s%s%s\n", dot(wordState(a.State)), bold(a.Name), strings.Repeat(" ", nameWidth-len(a.Name)+3), dim(a.State))
 		if a.Tunnel != "" {
-			// No status mark: the tunnel is a setting, not a check. The extra
-			// spaces stand in for one so the detail text stays in line.
+			// A setting, not a check: the spaces stand in for the mark.
 			fmt.Fprintf(o.w, "    %s     %s\n", dim("tunnel"), a.Tunnel)
 		}
 		if a.Commit != "" {
@@ -371,21 +370,17 @@ func domainCell(hosts []string) tcell {
 	return cell(hosts[0]+extra, hosts[0]+dim(extra))
 }
 
-// tunnelCell shows how the app is reached. Public is the default, so it is
-// dimmed and private is left to stand out.
-func tunnelCell(tunnel string) tcell {
+func tunnelCell(tunnel Tunnel) tcell {
 	switch tunnel {
 	case "":
 		return cell("–", dim("–"))
-	case "private":
-		return plainCell(tunnel)
+	case TunnelPrivate:
+		return plainCell(string(tunnel))
 	default:
-		return cell(tunnel, dim(tunnel))
+		return cell(string(tunnel), dim(string(tunnel)))
 	}
 }
 
-// shortCommit trims a SHA to the usual display length. Views carry the full
-// value so `--output json` stays useful for scripting.
 func shortCommit(commit string) string {
 	if len(commit) > 7 {
 		return commit[:7]
@@ -393,8 +388,6 @@ func shortCommit(commit string) string {
 	return commit
 }
 
-// commitCell shows what the running container was built from. A stopped app has
-// no commit to report, which the dash says plainly.
 func commitCell(commit string) tcell {
 	if commit == "" {
 		return cell("–", dim("–"))

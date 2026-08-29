@@ -20,8 +20,7 @@ type TailscaleState struct {
 	FunnelURL string `json:"funnel_url"`
 	// AuthKey optionally registers this server's own node non-interactively.
 	AuthKey string `json:"auth_key,omitempty"`
-	// The tailnet OAuth client (scope: services write) that manages the
-	// Tailscale Services private apps are served as.
+	// Tailnet OAuth client, scope: services write.
 	OAuthClientID     string `json:"oauth_client_id,omitempty"`
 	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
 }
@@ -113,9 +112,6 @@ func cliTailscaleConnect(args []string, w io.Writer) error {
 	writeCheck(w, "tailscale", "status", "ok", tailscaleStatusName(status))
 	reportTailscaleKeyExpiry(w, status)
 
-	// Offer private apps as an opt-in, and only then walk through the OAuth
-	// client setup - collected interactively so the secret never has to
-	// appear on a command line.
 	if state, err := loadTailscaleState(); err == nil {
 		if id, secret := tailscaleOAuthCredentials(state); (id == "" || secret == "") && cliCanPrompt(currentCLIMode()) {
 			enable, err := interactivePrompter(w).askYesNo("Enable private apps, served only to your tailnet?", false)
@@ -246,7 +242,7 @@ func tailscaleStatusName(status *tailscaleStatus) string {
 
 func tailscaleFunnelURL(status *tailscaleStatus) string {
 	host := tailscaleStatusName(status)
-	if host == "-" || !strings.Contains(host, ".ts.net") {
+	if host == "-" || !isTailnetHost(host) {
 		return ""
 	}
 	return "https://" + host
@@ -354,7 +350,7 @@ func doctorTailscale(w io.Writer, appCount int) bool {
 		return appCount == 0
 	}
 	parsed, err := url.Parse(publicURL)
-	if err != nil || parsed.Scheme != "https" || !strings.HasSuffix(parsed.Hostname(), ".ts.net") {
+	if err != nil || parsed.Scheme != "https" || !isTailnetHost(parsed.Hostname()) {
 		writeCheck(w, "tailscale", "funnel", "failed", publicURL, "expected Tailscale Funnel URL")
 		return false
 	}
@@ -411,6 +407,20 @@ func reportTailscaleKeyExpiry(w io.Writer, status *tailscaleStatus) {
 		fmt.Sprintf("expires %s (%dd)", expiry.Format("2006-01-02"), days), detail)
 }
 
+// isTailnetHost reports whether host is a MagicDNS name. It stays a pure suffix
+// test: config has to normalize the same way on every machine, whatever tailnet
+// this node happens to be on.
+func isTailnetHost(host string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(host)), ".ts.net")
+}
+
+func isTailnetURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return isTailnetHost(parsed.Hostname())
+}
 
 func tailnetDomain() string {
 	state, err := loadTailscaleState()

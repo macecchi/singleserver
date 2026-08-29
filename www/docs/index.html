@@ -424,7 +424,7 @@ singleserver domains remove &lt;app&gt; &lt;domain&gt; [--no-deploy] [--non-inte
 singleserver domains list [app]
 singleserver domains verify [app]</pre>
                 </div>
-                <p>Attaches and detaches hostnames. For public apps, <code>add</code> finds the Cloudflare zone that owns the hostname, writes a proxied CNAME to your tunnel, adds the tunnel route, and redeploys the app so Kamal routes the new host. For private apps, or any hostname ending in <code>.ts.net</code>, it provisions a Tailscale node for the app instead (see <a href="#private-tunnels">Private apps on Tailscale</a>). <code>remove</code> undoes all of that.</p>
+                <p>Attaches and detaches hostnames. For public apps, <code>add</code> finds the Cloudflare zone that owns the hostname, writes a proxied CNAME to your tunnel, adds the tunnel route, and redeploys the app so Kamal routes the new host. For private apps it provisions a Tailscale Service for the app instead (see <a href="#private-tunnels">Private apps on Tailscale</a>). <code>remove</code> undoes all of that. An app's tunnel is fixed when it is added, so <code>add</code> rejects a <code>.ts.net</code> hostname on a public app.</p>
                 <ul class="option-list">
                     <li><code>--no-deploy</code><span>Update config and DNS without redeploying the app yet.</span></li>
                     <li><code>--non-interactive</code><span>Never prompt. App and domain must be supplied for add/remove.</span></li>

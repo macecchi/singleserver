@@ -85,7 +85,7 @@ type addAppEntry struct {
 	branch          string
 	repoDir         string
 	hosts           []string
-	tunnel          string
+	tunnel          Tunnel
 	healthcheck     string
 	healthcheckPath string
 	runtime         string
@@ -165,10 +165,10 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 	if existing, exists := config.AppByName(app.Name); exists {
 		return fmt.Errorf("app name %s is already used by %s; rerun with --name <unique-name>", app.Name, existing.Repo)
 	}
-	if app.Tunnel == "private" {
+	if app.IsPrivate() {
 		service := strings.ToLower(tailscaleServiceName(app))
 		for _, existing := range config.Apps {
-			if existing.Tunnel != "private" || !strings.EqualFold(tailscaleServiceName(existing), service) {
+			if !existing.IsPrivate() || !strings.EqualFold(tailscaleServiceName(existing), service) {
 				continue
 			}
 			return fmt.Errorf("svc:%s is already served by %s; private apps are named after the first label of their domain, so rerun with a --domain whose first label is unique", service, existing.Repo)
@@ -341,7 +341,7 @@ func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addProm
 	}
 
 	if opts.tunnel == "" {
-		tunnel, err := p.askChoice("Tunnel type", []string{"public", "private"})
+		tunnel, err := p.askChoice("Tunnel type", []string{string(TunnelPublic), string(TunnelPrivate)})
 		if err != nil {
 			return addOptions{}, err
 		}
@@ -350,7 +350,7 @@ func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addProm
 
 	if len(opts.hosts) == 0 {
 		label := "App domain (optional)"
-		if opts.tunnel == "private" {
+		if Tunnel(opts.tunnel).IsPrivate() {
 			label = "Tailscale private domain (e.g. scoreboard.ts.net, optional)"
 		}
 		value, err := p.askOptional(label)
@@ -645,7 +645,7 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 		Name:            o.name,
 		Branch:          o.branch,
 		Hosts:           o.hosts,
-		Tunnel:          o.tunnel,
+		Tunnel:          Tunnel(o.tunnel),
 		Healthcheck:     o.healthcheck,
 		HealthcheckPath: o.healthcheckPath,
 		Runtime:         o.runtime,
@@ -662,11 +662,8 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 	if err := app.Normalize(); err != nil {
 		return AppConfig{}, addAppEntry{}, err
 	}
-	// A private app with no domain is served at <name>.<tailnet>. Recording that
-	// host explicitly is what gives it a Tailscale Service, a Kamal proxy host to
-	// route on, and a name `domains` can list; the tailnet suffix is appended
-	// wherever the full name is needed.
-	if app.Tunnel == "private" && len(app.Hosts) == 0 {
+	// A private app with no domain is served at <name>.<tailnet>.
+	if app.IsPrivate() && len(app.Hosts) == 0 {
 		app.Hosts = []string{app.Name}
 	}
 	entry := addAppEntry{
@@ -779,8 +776,8 @@ func (e addAppEntry) yamlNode() *yaml.Node {
 		}
 		appendNodePair(node, "hosts", hostNode)
 	}
-	if e.tunnel != "" && e.tunnel != "public" {
-		appendScalarPair(node, "tunnel", e.tunnel)
+	if e.tunnel != "" && e.tunnel != TunnelPublic {
+		appendScalarPair(node, "tunnel", string(e.tunnel))
 	}
 	if e.healthcheck != "" {
 		appendScalarPair(node, "healthcheck", e.healthcheck)

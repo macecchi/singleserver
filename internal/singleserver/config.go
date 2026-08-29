@@ -22,6 +22,17 @@ type Config struct {
 	Apps []AppConfig `yaml:"apps"`
 }
 
+// Tunnel is how an app is reached: over the public internet through Cloudflare,
+// or only from the tailnet, as a Tailscale Service.
+type Tunnel string
+
+const (
+	TunnelPublic  Tunnel = "public"
+	TunnelPrivate Tunnel = "private"
+)
+
+func (t Tunnel) IsPrivate() bool { return t == TunnelPrivate }
+
 type AppConfig struct {
 	Repo            string         `yaml:"repo"`
 	Name            string         `yaml:"name"`
@@ -29,7 +40,7 @@ type AppConfig struct {
 	RepoDir         string         `yaml:"path"`
 	Healthcheck     string         `yaml:"healthcheck"`
 	Hosts           []string       `yaml:"hosts"`
-	Tunnel          string         `yaml:"tunnel,omitempty"`
+	Tunnel          Tunnel         `yaml:"tunnel,omitempty"`
 	AppPort         int            `yaml:"app_port"`
 	AppPortSet      bool           `yaml:"-"`
 	HealthcheckPath string         `yaml:"healthcheck_path"`
@@ -109,30 +120,6 @@ func (a *AppConfig) Normalize() error {
 		return fmt.Errorf("invalid app_port for %s: %d", a.Repo, a.AppPort)
 	}
 
-	a.Tunnel = strings.ToLower(strings.TrimSpace(a.Tunnel))
-	if a.Tunnel == "" {
-		hasTSHost := false
-		for _, host := range a.Hosts {
-			if strings.HasSuffix(strings.ToLower(strings.TrimSpace(host)), ".ts.net") {
-				hasTSHost = true
-				break
-			}
-		}
-		if hasTSHost {
-			a.Tunnel = "private"
-		} else {
-			a.Tunnel = "public"
-		}
-	}
-
-	if a.Tunnel != "public" && a.Tunnel != "private" {
-		return fmt.Errorf("invalid tunnel for %s: %q (expected public or private)", a.Repo, a.Tunnel)
-	}
-
-	if a.Tunnel == "private" && len(a.Hosts) > 1 {
-		return fmt.Errorf("private tailscale tunnel for %s supports at most one domain: %v", a.Repo, a.Hosts)
-	}
-
 	hosts := make([]string, 0, len(a.Hosts))
 	seenHosts := map[string]bool{}
 	for _, host := range a.Hosts {
@@ -151,6 +138,23 @@ func (a *AppConfig) Normalize() error {
 		hosts = append(hosts, host)
 	}
 	a.Hosts = hosts
+
+	a.Tunnel = Tunnel(strings.ToLower(strings.TrimSpace(string(a.Tunnel))))
+	if a.Tunnel == "" {
+		a.Tunnel = TunnelPublic
+		for _, host := range a.Hosts {
+			if isTailnetHost(host) {
+				a.Tunnel = TunnelPrivate
+				break
+			}
+		}
+	}
+	if a.Tunnel != TunnelPublic && a.Tunnel != TunnelPrivate {
+		return fmt.Errorf("invalid tunnel for %s: %q (expected %s or %s)", a.Repo, a.Tunnel, TunnelPublic, TunnelPrivate)
+	}
+	if a.IsPrivate() && len(a.Hosts) > 1 {
+		return fmt.Errorf("private tailscale tunnel for %s supports at most one domain: %v", a.Repo, a.Hosts)
+	}
 
 	a.HealthcheckPath = strings.TrimSpace(a.HealthcheckPath)
 	if a.HealthcheckPath == "" {
@@ -196,6 +200,29 @@ func reposRoot() string {
 
 func storageRoot() string {
 	return envDefault("SINGLESERVER_STORAGE_ROOT", "/srv/storage")
+}
+
+func (a AppConfig) IsPrivate() bool { return a.Tunnel.IsPrivate() }
+
+// QualifiedHost expands a private app's bare label into its MagicDNS name.
+// Hosts are stored bare so the config does not pin one tailnet.
+func (a AppConfig) QualifiedHost(host string) string {
+	if !a.IsPrivate() || strings.Contains(host, ".") {
+		return host
+	}
+	domain := tailnetDomain()
+	if domain == "" {
+		return host
+	}
+	return host + "." + domain
+}
+
+func (a AppConfig) QualifiedHosts() []string {
+	hosts := make([]string, len(a.Hosts))
+	for i, host := range a.Hosts {
+		hosts[i] = a.QualifiedHost(host)
+	}
+	return hosts
 }
 
 func defaultHealthcheckPath(app AppConfig) string {
@@ -367,10 +394,8 @@ func (c *Config) Normalize() error {
 			seenHosts[hostKey] = c.Apps[i].Repo
 		}
 
-		// Distinct hosts can still collapse to the same Tailscale Service name,
-		// which is only the first label of the host. Two apps sharing a service
-		// would fight over it, and removing either would delete it for both.
-		if c.Apps[i].Tunnel == "private" {
+		// Distinct hosts can still collapse to one service name, its first label.
+		if c.Apps[i].IsPrivate() {
 			serviceKey := strings.ToLower(tailscaleServiceName(c.Apps[i]))
 			if existingRepo := seenServices[serviceKey]; existingRepo != "" {
 				return fmt.Errorf("duplicate tailscale service in config: %s and %s both resolve to svc:%s; give them distinct first domain labels", existingRepo, c.Apps[i].Repo, serviceKey)

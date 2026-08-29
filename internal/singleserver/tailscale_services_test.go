@@ -148,8 +148,6 @@ func TestTailscaleServiceNameDerivation(t *testing.T) {
 }
 
 func TestTailscaleServiceNameForHostFollowsTheHostBeingSynced(t *testing.T) {
-	// Removing one host must unserve the service that host resolves to, not the
-	// one the app's remaining config points at.
 	if got := tailscaleServiceNameForHost("scores.corp.ts.net", "scoreboard"); got != "scores" {
 		t.Fatalf("got %q, want %q", got, "scores")
 	}
@@ -158,8 +156,6 @@ func TestTailscaleServiceNameForHostFollowsTheHostBeingSynced(t *testing.T) {
 	}
 }
 
-// stubTailscaleServeCommands records every `tailscale serve` invocation and
-// fails the ones whose arguments contain any of failOn.
 func stubTailscaleServeCommands(t *testing.T, failOn ...string) *[][]string {
 	t.Helper()
 	original := commandRunFunc
@@ -182,9 +178,6 @@ func stubTailscaleServeCommands(t *testing.T, failOn ...string) *[][]string {
 }
 
 func TestUnserveTailscaleServiceReportsFailureToStopServing(t *testing.T) {
-	// A failed `serve ... off` leaves this host serving the service. Reporting
-	// success there would let removal delete the app config while the tailnet
-	// still routes to a service nothing cleans up afterwards.
 	calls := stubTailscaleServeCommands(t, "off")
 
 	var out bytes.Buffer
@@ -203,8 +196,6 @@ func TestUnserveTailscaleServiceReportsFailureToStopServing(t *testing.T) {
 }
 
 func TestUnserveTailscaleServiceToleratesDrainFailure(t *testing.T) {
-	// `serve drain` does not exist on older tailscale clients, so its failure
-	// must not block removal as long as the service is actually turned off.
 	calls := stubTailscaleServeCommands(t, "drain")
 
 	var out bytes.Buffer
@@ -220,9 +211,6 @@ func TestUnserveTailscaleServiceToleratesDrainFailure(t *testing.T) {
 }
 
 func TestSyncTailscaleAppDomainRemovalFailsWhenServiceKeepsServing(t *testing.T) {
-	// The no-OAuth removal path deliberately keeps the VIP service, so stopping
-	// the local serve config is the only thing that takes the app off the
-	// tailnet. If that fails, removal must not report success.
 	t.Setenv("SINGLESERVER_STATE_DIR", t.TempDir())
 	t.Setenv("TAILSCALE_OAUTH_CLIENT_ID", "")
 	t.Setenv("TAILSCALE_OAUTH_CLIENT_SECRET", "")

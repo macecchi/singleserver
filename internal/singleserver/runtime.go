@@ -102,10 +102,8 @@ func runningAppContainers() (map[string]string, error) {
 	return containers, nil
 }
 
-// deployedCommitFromContainer pulls the deployed commit out of a Kamal
-// container name, which is <service>-<role>-<version> and whose version is the
-// git SHA the image was built from. Kamal accepts an arbitrary --version, so a
-// segment that is not a SHA reports nothing rather than being shown as one.
+// Kamal names containers <service>-<role>-<version>, and builds tag the version
+// with the git SHA. An arbitrary --version is not a commit, so report nothing.
 func deployedCommitFromContainer(container string) string {
 	idx := strings.LastIndex(container, "-")
 	if idx < 0 {
@@ -124,9 +122,6 @@ func deployedCommitFromContainer(container string) string {
 	return version
 }
 
-// deployedCommitForApp reports the commit the app's running container was built
-// from. It is empty when the app is not running, which is the honest answer:
-// what a stopped app would run next is not what it last ran.
 func deployedCommitForApp(appName string, containers map[string]string) string {
 	container, ok := containerForApp(appName, containers)
 	if !ok {

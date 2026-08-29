@@ -404,3 +404,64 @@ func TestNormalizeRejectsUnknownTunnel(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestNormalizeInfersTunnelFromHosts(t *testing.T) {
+	cases := []struct {
+		name string
+		app  AppConfig
+		want Tunnel
+	}{
+		{"tailnet host", AppConfig{Repo: "acme/scoreboard", Hosts: []string{"scores.corp.ts.net"}}, TunnelPrivate},
+		{"public host", AppConfig{Repo: "acme/scoreboard", Hosts: []string{"scores.example.com"}}, TunnelPublic},
+		{"no host", AppConfig{Repo: "acme/scoreboard"}, TunnelPublic},
+		{"explicit wins over host", AppConfig{Repo: "acme/scoreboard", Tunnel: " PUBLIC ", Hosts: []string{"scores.corp.ts.net"}}, TunnelPublic},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := tc.app
+			if err := app.Normalize(); err != nil {
+				t.Fatal(err)
+			}
+			if app.Tunnel != tc.want {
+				t.Fatalf("got %q, want %q", app.Tunnel, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeCapsPrivateAppsAfterDeduplicatingHosts(t *testing.T) {
+	app := AppConfig{Repo: "acme/scoreboard", Tunnel: TunnelPrivate, Hosts: []string{"scores.corp.ts.net", "scores.corp.ts.net"}}
+	if err := app.Normalize(); err != nil {
+		t.Fatalf("duplicate hosts collapse to one domain, so this is not over the cap: %v", err)
+	}
+	if len(app.Hosts) != 1 {
+		t.Fatalf("unexpected hosts: %#v", app.Hosts)
+	}
+
+	app = AppConfig{Repo: "acme/scoreboard", Tunnel: TunnelPrivate, Hosts: []string{"scores.corp.ts.net", "notes.corp.ts.net"}}
+	if err := app.Normalize(); err == nil {
+		t.Fatal("expected two distinct domains to be rejected")
+	}
+}
+
+func TestQualifiedHostsExpandBareLabelsForPrivateAppsOnly(t *testing.T) {
+	t.Setenv("SINGLESERVER_STATE_DIR", t.TempDir())
+	if err := writeTailscaleState(&TailscaleState{Hostname: "box.corp.ts.net"}); err != nil {
+		t.Fatal(err)
+	}
+
+	private := AppConfig{Name: "scoreboard", Tunnel: TunnelPrivate, Hosts: []string{"scores"}}
+	if got := private.QualifiedHosts(); len(got) != 1 || got[0] != "scores.corp.ts.net" {
+		t.Fatalf("expected the bare label expanded, got %#v", got)
+	}
+
+	qualified := AppConfig{Name: "scoreboard", Tunnel: TunnelPrivate, Hosts: []string{"scores.corp.ts.net"}}
+	if got := qualified.QualifiedHosts(); got[0] != "scores.corp.ts.net" {
+		t.Fatalf("expected an already-qualified host left alone, got %#v", got)
+	}
+
+	public := AppConfig{Name: "scoreboard", Tunnel: TunnelPublic, Hosts: []string{"scores"}}
+	if got := public.QualifiedHosts(); got[0] != "scores" {
+		t.Fatalf("expected a public host left alone, got %#v", got)
+	}
+}

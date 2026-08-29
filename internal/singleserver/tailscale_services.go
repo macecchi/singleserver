@@ -15,9 +15,7 @@ import (
 )
 
 // Private apps are served as Tailscale Services: one VIP service per app,
-// created through the Tailscale API and hosted by this server's own node with
-// `tailscale serve --service`. The API credential is a tailnet OAuth client
-// (scope: services write), which unlike auth keys never expires.
+// hosted by this node with `tailscale serve --service`.
 
 var tailscaleAPIBaseURL = "https://api.tailscale.com"
 
@@ -103,8 +101,6 @@ func vipServicePath(name string) string {
 	return "/api/v2/tailnet/-/vip-services/" + url.PathEscape("svc:"+name)
 }
 
-// ensureVIPServiceFunc creates the app's VIP service, or updates it in place
-// preserving any auto-allocated addresses.
 var ensureVIPServiceFunc = ensureVIPService
 
 func ensureVIPService(token, name, comment string) error {
@@ -152,9 +148,7 @@ func deleteVIPService(token, name string) error {
 
 const tailscaleServiceTag = "tag:singleserver"
 
-// promptTailscaleOAuthClient walks an interactive user through creating the
-// tailnet OAuth client and collects it. Returns empty values without error
-// when prompting is not possible or the user skips.
+// Returns empty values without error when prompting is impossible or skipped.
 func promptTailscaleOAuthClient(w io.Writer) (string, string, error) {
 	if !cliCanPrompt(currentCLIMode()) {
 		return "", "", nil
@@ -197,12 +191,8 @@ func promptTailscaleOAuthClient(w io.Writer) (string, string, error) {
 	}
 }
 
-// tailscaleServiceNameForHost returns the Tailscale Service that serves hostname.
-//
-// The app is served at the service's MagicDNS name, so the service name must be
-// the first label of the host or the two never match. With no host at all the
-// app name is the service name, so the app is reachable at <name>.<tailnet>
-// either way.
+// The app is served at the service's MagicDNS name, so the service name has to
+// be the host's first label or the two never match.
 func tailscaleServiceNameForHost(hostname, appName string) string {
 	hostname = strings.TrimSpace(hostname)
 	if hostname == "" {
@@ -214,7 +204,6 @@ func tailscaleServiceNameForHost(hostname, appName string) string {
 	return hostname
 }
 
-// tailscaleServiceName returns the Tailscale Service a private app is served as.
 // Only the first host matters: Normalize caps private apps at one domain.
 func tailscaleServiceName(app AppConfig) string {
 	host := ""
@@ -225,11 +214,7 @@ func tailscaleServiceName(app AppConfig) string {
 }
 
 func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Writer) error {
-	if !strings.Contains(hostname, ".") {
-		if domain := tailnetDomain(); domain != "" {
-			hostname = hostname + "." + domain
-		}
-	}
+	hostname = app.QualifiedHost(hostname)
 	serviceName := tailscaleServiceNameForHost(hostname, app.Name)
 
 	state, err := loadTailscaleState()
@@ -239,8 +224,6 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 	clientID, clientSecret := tailscaleOAuthCredentials(state)
 	if clientID == "" || clientSecret == "" {
 		if !add {
-			// Best effort on removal: without credentials the service record
-			// stays in the admin console, but the host stops serving it.
 			writeCheck(w, app.Name, "tailscale_service", "pending", "no OAuth client stored; delete svc:"+serviceName+" in the admin console")
 			return unserveTailscaleService(app.Name, serviceName, w)
 		}
@@ -299,8 +282,8 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 
 func unserveTailscaleService(appName, serviceName string, w io.Writer) error {
 	writeCheck(w, appName, "tailscale_serve", "stopping", "svc:"+serviceName)
-	// Best effort: older tailscale clients have no `serve drain`, and draining is
-	// only a courtesy to in-flight requests. Turning the service off is not.
+	// Best effort: older clients have no `serve drain`, and it is only a
+	// courtesy to in-flight requests. Turning the service off is not.
 	_ = commandRunFunc(30*time.Second, "tailscale", "serve", "drain", "svc:"+serviceName)
 	if err := commandRunFunc(30*time.Second, "tailscale", "serve", "--service=svc:"+serviceName, "--https=443", "off"); err != nil {
 		return fmt.Errorf("failed to stop serving svc:%s; this host may still serve it, run `tailscale serve --service=svc:%s --https=443 off`: %w", serviceName, serviceName, err)
@@ -308,8 +291,6 @@ func unserveTailscaleService(appName, serviceName string, w io.Writer) error {
 	return nil
 }
 
-// doctorTailscaleServices reports on the stored OAuth client used to manage
-// app services. Silent when none is stored (no private apps configured yet).
 func doctorTailscaleServices(w io.Writer) {
 	state, err := loadTailscaleState()
 	if err != nil {

@@ -127,6 +127,10 @@ func updateDomain(appName string, host string, add bool, w io.Writer) (*AppConfi
 	}
 
 	app := &config.Apps[appIndex]
+	// The tunnel is fixed at `add` time, and syncAppDomain routes on it alone.
+	if add && !app.IsPrivate() && isTailnetHost(host) {
+		return nil, fmt.Errorf("%s is a tailnet domain but %s is a public app; private apps set their domain with `singleserver add --tunnel private`", host, app.Name)
+	}
 	if add {
 		if !containsFold(app.Hosts, host) {
 			app.Hosts = append(app.Hosts, host)
@@ -190,12 +194,7 @@ func listDomains(args []string, w io.Writer) error {
 			fmt.Fprintf(w, "%s\t-\n", app.Name)
 			continue
 		}
-		for _, host := range app.Hosts {
-			if app.Tunnel == "private" && !strings.Contains(host, ".") {
-				if domain := tailnetDomain(); domain != "" {
-					host = host + "." + domain
-				}
-			}
+		for _, host := range app.QualifiedHosts() {
 			fmt.Fprintf(w, "%s\t%s\n", app.Name, host)
 		}
 	}
@@ -243,13 +242,8 @@ func verifyDomains(args []string, w io.Writer) error {
 
 	verifyResolverDNS := cloudflareClient == nil
 	for _, app := range apps {
-		for _, host := range app.Hosts {
-			if app.Tunnel == "private" {
-				if !strings.Contains(host, ".") {
-					if domain := tailnetDomain(); domain != "" {
-						host = host + "." + domain
-					}
-				}
+		for _, host := range app.QualifiedHosts() {
+			if app.IsPrivate() {
 				if verifyResolverDNS && !doctorHostResolves(w, app.Name, "dns", host) {
 					failed = true
 				}

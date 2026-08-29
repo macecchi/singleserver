@@ -458,8 +458,6 @@ func TestAddOptionsPersistPrivateTunnel(t *testing.T) {
 	if entry.tunnel != "private" {
 		t.Fatalf("expected private tunnel on the persisted entry, got %q", entry.tunnel)
 	}
-	// With no --domain the app is served at <name>.<tailnet>, so the host it
-	// gets a Tailscale Service for has to be recorded.
 	if len(app.Hosts) != 1 || app.Hosts[0] != "scoreboard" {
 		t.Fatalf("unexpected hosts: %#v", app.Hosts)
 	}
