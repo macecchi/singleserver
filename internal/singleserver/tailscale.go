@@ -18,8 +18,6 @@ import (
 type TailscaleState struct {
 	Hostname  string `json:"hostname"`
 	FunnelURL string `json:"funnel_url"`
-	// AuthKey optionally registers this server's own node non-interactively.
-	AuthKey string `json:"auth_key,omitempty"`
 	// Tailnet OAuth client, scope: services write.
 	OAuthClientID     string `json:"oauth_client_id,omitempty"`
 	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
@@ -129,7 +127,7 @@ func tailscaleConnect(args []string, w io.Writer) error {
 	writeCheck(w, "tailscale", "funnel", "starting", "127.0.0.1:"+port)
 	if err := commandRunToWriterFunc(w, 45*time.Second, "tailscale", "funnel", "--bg", "--yes", port); err != nil {
 		writeCheck(w, "tailscale", "funnel", "pending", err.Error())
-		return writeTailscaleStateFromStatus(status, "", *authKey)
+		return writeTailscaleStateFromStatus(status, "")
 	}
 	status, err = currentTailscaleStatus()
 	if err != nil {
@@ -138,9 +136,9 @@ func tailscaleConnect(args []string, w io.Writer) error {
 	funnelURL := tailscaleFunnelURL(status)
 	if funnelURL == "" {
 		writeCheck(w, "tailscale", "funnel", "pending", "-", "could not determine Funnel URL from tailscale status")
-		return writeTailscaleStateFromStatus(status, "", *authKey)
+		return writeTailscaleStateFromStatus(status, "")
 	}
-	if err := writeTailscaleStateFromStatus(status, funnelURL, *authKey); err != nil {
+	if err := writeTailscaleStateFromStatus(status, funnelURL); err != nil {
 		return err
 	}
 	env, err := loadServiceEnv()
@@ -267,16 +265,13 @@ func tailscaleFunnelURL(status *tailscaleStatus) string {
 // does not own (the OAuth client, and any added later) survive reconnects. A
 // state file that exists but cannot be read is an error, not a blank slate:
 // rewriting it would silently discard the stored credentials.
-func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string, authKey string) error {
+func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string) error {
 	state, err := loadTailscaleState()
 	if err != nil {
 		return fmt.Errorf("refusing to rewrite tailscale state (fix or delete the file): %w", err)
 	}
 	state.Hostname = tailscaleStatusName(status)
 	state.FunnelURL = strings.TrimRight(funnelURL, "/")
-	if authKey != "" {
-		state.AuthKey = authKey
-	}
 	return writeTailscaleState(state)
 }
 
