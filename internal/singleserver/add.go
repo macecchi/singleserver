@@ -210,19 +210,13 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 	syncedHosts := []string{}
 	for _, host := range app.Hosts {
 		if err := syncAppDomainFunc(app, host, true, w); err != nil {
-			for _, syncedHost := range syncedHosts {
-				_ = syncAppDomainFunc(app, syncedHost, false, io.Discard)
-			}
-			return err
+			return errors.Join(err, rollbackSyncedHosts(app, syncedHosts))
 		}
 		syncedHosts = append(syncedHosts, host)
 	}
 
 	if err := writeFileAtomic(configPath, updated); err != nil {
-		for _, syncedHost := range syncedHosts {
-			_ = syncAppDomainFunc(app, syncedHost, false, io.Discard)
-		}
-		return err
+		return errors.Join(err, rollbackSyncedHosts(app, syncedHosts))
 	}
 	writeCheck(w, app.Name, "config", "ok", configPath, "added")
 
@@ -887,6 +881,19 @@ func writeFileAtomic(path string, body []byte) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+// rollbackSyncedHosts undoes provisioned domains after a failed add. Every host
+// is attempted; a rollback that fails leaves live routing for an app that never
+// made it into the config, so those errors must reach the user.
+func rollbackSyncedHosts(app AppConfig, hosts []string) error {
+	var errs []error
+	for _, host := range hosts {
+		if err := syncAppDomainFunc(app, host, false, io.Discard); err != nil {
+			errs = append(errs, fmt.Errorf("rollback of %s failed: %w", host, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func normalizeAddArgs(args []string) []string {

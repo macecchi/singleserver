@@ -2,6 +2,7 @@ package singleserver
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -507,5 +508,30 @@ func TestAddOptionsDoNotPersistPublicTunnel(t *testing.T) {
 	}
 	if strings.Contains(string(updated), "tunnel:") {
 		t.Fatalf("the default tunnel should stay out of the config:\n%s", updated)
+	}
+}
+
+func TestRollbackSyncedHostsSurfacesFailures(t *testing.T) {
+	original := syncAppDomainFunc
+	t.Cleanup(func() { syncAppDomainFunc = original })
+	var rolledBack []string
+	syncAppDomainFunc = func(app AppConfig, hostname string, add bool, w io.Writer) error {
+		if add {
+			t.Fatalf("rollback must only remove, got add for %s", hostname)
+		}
+		rolledBack = append(rolledBack, hostname)
+		if hostname == "b.example.com" {
+			return errors.New("serve off failed")
+		}
+		return nil
+	}
+
+	app := AppConfig{Name: "scoreboard"}
+	err := rollbackSyncedHosts(app, []string{"a.example.com", "b.example.com", "c.example.com"})
+	if err == nil || !strings.Contains(err.Error(), "rollback of b.example.com failed") {
+		t.Fatalf("expected the failed host surfaced, got: %v", err)
+	}
+	if len(rolledBack) != 3 {
+		t.Fatalf("every host must be attempted even after a failure, got %v", rolledBack)
 	}
 }
