@@ -269,8 +269,6 @@ func doctorCloudflare(w io.Writer, allApps []AppConfig, selectedApps []AppConfig
 	}
 
 	for _, app := range selectedApps {
-		// Private apps are served by Tailscale, not Cloudflare; their hosts
-		// have no DNS records or tunnel routes to check here.
 		if app.IsPrivate() {
 			continue
 		}
@@ -583,8 +581,6 @@ func appsHaveHosts(apps []AppConfig) bool {
 	return false
 }
 
-// publicAppsHaveHosts gates the "connect Cloudflare" nudge: a server hosting
-// only private apps has no reason to connect a public DNS provider.
 func publicAppsHaveHosts(apps []AppConfig) bool {
 	for _, app := range apps {
 		if !app.IsPrivate() && len(app.Hosts) > 0 {

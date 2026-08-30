@@ -14,8 +14,7 @@ import (
 	"time"
 )
 
-// Private apps are served as Tailscale Services: one VIP service per app,
-// hosted by this node with `tailscale serve --service`.
+// Private apps are served as Tailscale Services, one VIP service per app.
 
 var tailscaleAPIBaseURL = "https://api.tailscale.com"
 
@@ -103,9 +102,6 @@ func vipServicePath(name string) string {
 
 var ensureVIPServiceFunc = ensureVIPService
 
-// ensureVIPService creates or updates the app's VIP service and reports whether
-// it created one. An existing service is adopted only when it already carries
-// the singleserver tag, and keeps the addrs Tailscale allocated for it.
 func ensureVIPService(token, name, comment string) (bool, error) {
 	svc := vipService{
 		Name:    "svc:" + name,
@@ -161,7 +157,6 @@ func deleteVIPService(token, name string) error {
 
 const tailscaleServiceTag = "tag:singleserver"
 
-// Returns empty values without error when prompting is impossible or skipped.
 func promptTailscaleOAuthClient(w io.Writer) (string, string, error) {
 	if !cliCanPrompt(currentCLIMode()) {
 		return "", "", nil
@@ -204,9 +199,6 @@ func promptTailscaleOAuthClient(w io.Writer) (string, string, error) {
 	}
 }
 
-// The app is served at the service's MagicDNS name, so the service name has to
-// be the host's first label or the two never match. Service names are lowercase
-// DNS labels, while hosts keep the case the user typed.
 func tailscaleServiceNameForHost(hostname, appName string) string {
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	if hostname == "" {
@@ -218,7 +210,6 @@ func tailscaleServiceNameForHost(hostname, appName string) string {
 	return hostname
 }
 
-// Only the first host matters: Normalize caps private apps at one domain.
 func tailscaleServiceName(app AppConfig) string {
 	host := ""
 	if len(app.Hosts) > 0 {
@@ -239,10 +230,7 @@ func storeTailscaleOAuthClient(state *TailscaleState, id, secret string, w io.Wr
 	return nil
 }
 
-// ensureTailscaleServicesReady checks that an OAuth client for the services API
-// is stored before provisioning starts, prompting for one when it can. Keeping
-// the prompt here, at command level, means syncTailscaleAppDomain never blocks
-// on stdin — its rollback callers run it against io.Discard.
+// Prompting stays at command level: syncTailscaleAppDomain must never block on stdin.
 func ensureTailscaleServicesReady(w io.Writer) error {
 	state, err := loadTailscaleState()
 	if err != nil {
@@ -279,8 +267,6 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 	}
 
 	if add {
-		// The service answers at <label>.<tailnet>; a host that cannot be
-		// qualified, or one on another tailnet, would never match it.
 		if !strings.Contains(hostname, ".") {
 			return fmt.Errorf("cannot qualify %s: this server's tailnet is unknown; run `singleserver connect tailscale` first", hostname)
 		}
@@ -288,8 +274,6 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 			return fmt.Errorf("%s is not on this server's tailnet; the app is served at %s.%s, so use that domain (or none)", hostname, serviceName, domain)
 		}
 
-		// Service hosts must have tag-based identity. Checked before spending
-		// an API roundtrip on a token that could not be used.
 		if status, err := currentTailscaleStatus(); err == nil && status.Self != nil && len(status.Self.Tags) == 0 {
 			return errors.New("this server's Tailscale node has no tags, and only tagged nodes can host Tailscale Services; add " + tailscaleServiceTag + " to this machine in the admin console (Machines -> Edit ACL tags)")
 		}
@@ -333,8 +317,7 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 
 func unserveTailscaleService(appName, serviceName string, w io.Writer) error {
 	writeCheck(w, appName, "tailscale_serve", "stopping", "svc:"+serviceName)
-	// Best effort: older clients have no `serve drain`, and it is only a
-	// courtesy to in-flight requests. Turning the service off is not.
+	// Drain is best-effort: older clients lack it.
 	_ = commandRunFunc(30*time.Second, "tailscale", "serve", "drain", "svc:"+serviceName)
 	if err := commandRunFunc(30*time.Second, "tailscale", "serve", "--service=svc:"+serviceName, "--https=443", "off"); err != nil {
 		return fmt.Errorf("failed to stop serving svc:%s; this host may still serve it, run `tailscale serve --service=svc:%s --https=443 off`: %w", serviceName, serviceName, err)

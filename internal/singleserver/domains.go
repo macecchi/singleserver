@@ -123,15 +123,12 @@ func updateDomain(appName string, host string, add bool, w io.Writer) (*AppConfi
 	}
 
 	app := &config.Apps[appIndex]
-	// A bare-stored private host is displayed qualified (`domains list`, the
-	// live URL), so accept either spelling and work with the stored one.
 	if stored, ok := storedHostFor(*app, host); ok {
 		host = stored
 	} else if !add {
 		return nil, fmt.Errorf("%s is not configured for %s", host, app.Name)
 	}
 
-	// The tunnel is fixed at `add` time, and syncAppDomain routes on it alone.
 	if add && !app.IsPrivate() && isTailnetHost(host) {
 		return nil, fmt.Errorf("%s is a tailnet domain but %s is a public app; private apps set their domain with `singleserver add --tunnel private`", host, app.Name)
 	}
@@ -168,8 +165,7 @@ func updateDomain(appName string, host string, add bool, w io.Writer) (*AppConfi
 	return app, nil
 }
 
-// storedHostFor resolves a host the user typed to the spelling the config
-// stores, matching either form directly or through its qualified MagicDNS name.
+// storedHostFor resolves a typed host to the spelling the config stores.
 func storedHostFor(app AppConfig, host string) (string, bool) {
 	for _, stored := range app.Hosts {
 		if strings.EqualFold(stored, host) || strings.EqualFold(app.QualifiedHost(stored), host) {
@@ -259,8 +255,6 @@ func verifyDomains(args []string, w io.Writer) error {
 	verifyResolverDNS := cloudflareClient == nil
 	for _, app := range apps {
 		for _, host := range app.QualifiedHosts() {
-			// A private host has no Cloudflare record to verify; resolving its
-			// MagicDNS name is the whole check.
 			if (verifyResolverDNS || app.IsPrivate()) && !doctorHostResolves(w, app.Name, "dns", host) {
 				failed = true
 			}

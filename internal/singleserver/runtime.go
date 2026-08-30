@@ -103,11 +103,9 @@ func runningAppContainers() (map[string]string, error) {
 	return containers, nil
 }
 
-// commitPattern matches an abbreviated-to-full lowercase git SHA.
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
-// Kamal names containers <service>-<role>-<version>, and builds tag the version
-// with the git SHA. An arbitrary --version is not a commit, so report nothing.
+// Kamal tags the container version with the git SHA; an arbitrary --version is not a commit.
 func deployedCommitFromContainer(container string) string {
 	idx := strings.LastIndex(container, "-")
 	if idx < 0 {

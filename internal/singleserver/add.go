@@ -659,7 +659,6 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 	if err := app.Normalize(); err != nil {
 		return AppConfig{}, addAppEntry{}, err
 	}
-	// A private app with no domain is served at <name>.<tailnet>.
 	if app.IsPrivate() && len(app.Hosts) == 0 {
 		app.Hosts = []string{app.Name}
 	}
@@ -773,7 +772,6 @@ func (e addAppEntry) yamlNode() *yaml.Node {
 		}
 		appendNodePair(node, "hosts", hostNode)
 	}
-	// The default tunnel stays out of the config.
 	if e.tunnel.IsPrivate() {
 		appendScalarPair(node, "tunnel", string(e.tunnel))
 	}
@@ -883,9 +881,6 @@ func writeFileAtomic(path string, body []byte) error {
 	return os.Rename(tmpPath, path)
 }
 
-// rollbackSyncedHosts undoes provisioned domains after a failed add. Every host
-// is attempted; a rollback that fails leaves live routing for an app that never
-// made it into the config, so those errors must reach the user.
 func rollbackSyncedHosts(app AppConfig, hosts []string) error {
 	var errs []error
 	for _, host := range hosts {

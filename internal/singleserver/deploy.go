@@ -174,7 +174,6 @@ func (m *DeployManager) runHealthcheck(app AppConfig, runID string) error {
 	}
 
 	client := healthcheckClient()
-	// The public-DNS resolver below cannot see MagicDNS names.
 	if app.IsPrivate() || isTailnetURL(app.Healthcheck) {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}

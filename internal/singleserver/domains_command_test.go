@@ -373,9 +373,6 @@ func TestDomainsRemoveAcceptsQualifiedSpellingOfBareHost(t *testing.T) {
 	if err := writeTailscaleState(&TailscaleState{Hostname: "box.corp.ts.net"}); err != nil {
 		t.Fatal(err)
 	}
-	// `domains list` shows the qualified name for the bare-stored host, so
-	// remove has to accept that spelling, and the healthcheck pointing at it
-	// has to go with the host.
 	if err := os.WriteFile(configPath, []byte(`apps:
   - repo: acme/scoreboard
     tunnel: private

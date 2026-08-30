@@ -160,9 +160,6 @@ func tailscaleConnect(args []string, w io.Writer) error {
 	return nil
 }
 
-// offerTailscaleOAuthSetup asks an interactive connect run whether to store an
-// OAuth client for private app services. Declining, or having one already, is
-// not an error.
 func offerTailscaleOAuthSetup(w io.Writer) error {
 	state, err := loadTailscaleState()
 	if err != nil {
@@ -261,10 +258,7 @@ func tailscaleFunnelURL(status *tailscaleStatus) string {
 	return "https://" + host
 }
 
-// writeTailscaleStateFromStatus updates the stored state in place, so fields it
-// does not own (the OAuth client, and any added later) survive reconnects. A
-// state file that exists but cannot be read is an error, not a blank slate:
-// rewriting it would silently discard the stored credentials.
+// Mutates the loaded state in place so fields it does not own survive reconnects.
 func writeTailscaleStateFromStatus(status *tailscaleStatus, funnelURL string) error {
 	state, err := loadTailscaleState()
 	if err != nil {
@@ -343,8 +337,6 @@ func doctorTailscale(w io.Writer, appCount int, hasPrivateApps bool) bool {
 	}
 	writeCheck(w, "tailscale", "status", "ok", tailscaleStatusName(status))
 	reportTailscaleKeyExpiry(w, status)
-	// The services probe costs a Tailscale API roundtrip, so only servers that
-	// actually host private apps pay it.
 	if hasPrivateApps {
 		doctorTailscaleServices(w)
 	}
@@ -422,9 +414,6 @@ func reportTailscaleKeyExpiry(w io.Writer, status *tailscaleStatus) {
 		fmt.Sprintf("expires %s (%dd)", expiry.Format("2006-01-02"), days), detail)
 }
 
-// isTailnetHost reports whether host is a MagicDNS name. It stays a pure suffix
-// test: config has to normalize the same way on every machine, whatever tailnet
-// this node happens to be on.
 func isTailnetHost(host string) bool {
 	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(host)), ".ts.net")
 }

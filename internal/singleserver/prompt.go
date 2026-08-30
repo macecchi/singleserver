@@ -5,9 +5,7 @@ import (
 	"io"
 )
 
-// Sequential prompters must share one buffered reader per input source: a
-// fresh bufio.Reader would swallow input the previous one had buffered ahead
-// (piped answers, terminal type-ahead).
+// A fresh bufio.Reader per prompter would swallow input the previous one buffered ahead.
 var sharedPromptReader struct {
 	src io.Reader
 	r   *bufio.Reader

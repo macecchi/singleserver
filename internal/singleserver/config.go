@@ -22,8 +22,6 @@ type Config struct {
 	Apps []AppConfig `yaml:"apps"`
 }
 
-// Tunnel is how an app is reached: over the public internet through Cloudflare,
-// or only from the tailnet, as a Tailscale Service.
 type Tunnel string
 
 const (
@@ -156,8 +154,6 @@ func (a *AppConfig) Normalize() error {
 		if len(a.Hosts) > 1 {
 			return fmt.Errorf("private tailscale tunnel for %s supports at most one domain: %v", a.Repo, a.Hosts)
 		}
-		// A private app is served at a MagicDNS name; any other domain would
-		// never match what Kamal's proxy routes.
 		for _, host := range a.Hosts {
 			if strings.Contains(host, ".") && !isTailnetHost(host) {
 				return fmt.Errorf("private tailscale tunnel for %s requires a .ts.net domain or a bare name, got %q", a.Repo, host)
@@ -214,7 +210,6 @@ func storageRoot() string {
 func (a AppConfig) IsPrivate() bool { return a.Tunnel.IsPrivate() }
 
 // QualifiedHost expands a private app's bare label into its MagicDNS name.
-// Hosts are stored bare so the config does not pin one tailnet.
 func (a AppConfig) QualifiedHost(host string) string {
 	if !a.IsPrivate() || strings.Contains(host, ".") {
 		return host
