@@ -2,6 +2,7 @@ package singleserver
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -118,7 +119,7 @@ func TestEnsureGitHubSetupReadyExplainsIncompleteSetup(t *testing.T) {
 }
 
 func TestPromptAddOptionsUsesDockerfileDefaults(t *testing.T) {
-	opts := addOptions{repo: "acme/app"}
+	opts := addOptions{repo: "acme/app", tunnel: "public"}
 	var out bytes.Buffer
 	got, err := promptAddOptions(opts, strings.NewReader("\n\n\n\n\n"), &out, addPromptContext{
 		hasDockerfile: true,
@@ -149,7 +150,7 @@ func TestPromptAddOptionsUsesDockerfileDefaults(t *testing.T) {
 }
 
 func TestPromptAddOptionsFlushesBeforeReading(t *testing.T) {
-	opts := addOptions{repo: "acme/app"}
+	opts := addOptions{repo: "acme/app", tunnel: "public"}
 	out := &flushCountingWriter{}
 	_, err := promptAddOptions(opts, strings.NewReader("\n\n\n\n\n"), out, addPromptContext{
 		hasDockerfile: true,
@@ -186,7 +187,7 @@ func TestPromptAddOptionsGeneratedNodeStaticBuild(t *testing.T) {
 		"n",
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := promptAddOptions(addOptions{repo: "acme/site"}, strings.NewReader(input), &out, addPromptContext{
+	got, err := promptAddOptions(addOptions{repo: "acme/site", tunnel: "public"}, strings.NewReader(input), &out, addPromptContext{
 		hasDockerfile: false,
 		targetBranch:  "main",
 	})
@@ -224,7 +225,7 @@ func TestPromptAddOptionsGeneratedBunDynamicApp(t *testing.T) {
 		"y",
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := promptAddOptions(addOptions{repo: "acme/app"}, strings.NewReader(input), &out, addPromptContext{
+	got, err := promptAddOptions(addOptions{repo: "acme/app", tunnel: "public"}, strings.NewReader(input), &out, addPromptContext{
 		hasDockerfile: false,
 		targetBranch:  "main",
 	})
@@ -427,7 +428,7 @@ func TestPromptAddOptionsCollectsEnv(t *testing.T) {
 		"n",                     // deploy now?
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	got, err := promptAddOptions(addOptions{repo: "acme/app"}, strings.NewReader(input), &out, addPromptContext{
+	got, err := promptAddOptions(addOptions{repo: "acme/app", tunnel: "public"}, strings.NewReader(input), &out, addPromptContext{
 		hasDockerfile: true,
 		targetBranch:  "main",
 	})
@@ -442,5 +443,95 @@ func TestPromptAddOptionsCollectsEnv(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "--env 'SESSION_SECRET=s3cret'") {
 		t.Fatalf("expected env in the equivalent command:\n%s", out.String())
+	}
+}
+
+func TestPromptAddOptionsTunnelDefaultsToPublic(t *testing.T) {
+	opts := addOptions{repo: "acme/app"}
+	var out bytes.Buffer
+	got, err := promptAddOptions(opts, strings.NewReader("\n\n\n\n\n\n"), &out, addPromptContext{
+		hasDockerfile: true,
+		targetBranch:  "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.tunnel != string(TunnelPublic) {
+		t.Fatalf("pressing Enter should keep the default public tunnel, got %q", got.tunnel)
+	}
+}
+
+func TestAddOptionsPersistPrivateTunnel(t *testing.T) {
+	opts := addOptions{repo: "acme/scoreboard", tunnel: "private"}
+	app, entry, err := opts.app()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if app.Tunnel != "private" {
+		t.Fatalf("expected private tunnel on the runtime config, got %q", app.Tunnel)
+	}
+	if entry.tunnel != "private" {
+		t.Fatalf("expected private tunnel on the persisted entry, got %q", entry.tunnel)
+	}
+	if len(app.Hosts) != 1 || app.Hosts[0] != "scoreboard" {
+		t.Fatalf("unexpected hosts: %#v", app.Hosts)
+	}
+	if len(entry.hosts) != 1 || entry.hosts[0] != "scoreboard" {
+		t.Fatalf("unexpected entry hosts: %#v", entry.hosts)
+	}
+
+	updated, err := appendAppToConfigYAML(nil, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "tunnel: private") {
+		t.Fatalf("expected tunnel to persist:\n%s", updated)
+	}
+}
+
+func TestAddOptionsDoNotPersistPublicTunnel(t *testing.T) {
+	opts := addOptions{repo: "acme/scoreboard", tunnel: "public"}
+	app, entry, err := opts.app()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Tunnel != "public" {
+		t.Fatalf("expected public tunnel, got %q", app.Tunnel)
+	}
+	if len(app.Hosts) != 0 {
+		t.Fatalf("public apps should not get an implied host: %#v", app.Hosts)
+	}
+	updated, err := appendAppToConfigYAML(nil, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(updated), "tunnel:") {
+		t.Fatalf("the default tunnel should stay out of the config:\n%s", updated)
+	}
+}
+
+func TestRollbackSyncedHostsSurfacesFailures(t *testing.T) {
+	original := syncAppDomainFunc
+	t.Cleanup(func() { syncAppDomainFunc = original })
+	var rolledBack []string
+	syncAppDomainFunc = func(app AppConfig, hostname string, add bool, w io.Writer) error {
+		if add {
+			t.Fatalf("rollback must only remove, got add for %s", hostname)
+		}
+		rolledBack = append(rolledBack, hostname)
+		if hostname == "b.example.com" {
+			return errors.New("serve off failed")
+		}
+		return nil
+	}
+
+	app := AppConfig{Name: "scoreboard"}
+	err := rollbackSyncedHosts(app, []string{"a.example.com", "b.example.com", "c.example.com"})
+	if err == nil || !strings.Contains(err.Error(), "rollback of b.example.com failed") {
+		t.Fatalf("expected the failed host surfaced, got: %v", err)
+	}
+	if len(rolledBack) != 3 {
+		t.Fatalf("every host must be attempted even after a failure, got %v", rolledBack)
 	}
 }

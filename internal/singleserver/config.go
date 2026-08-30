@@ -22,6 +22,15 @@ type Config struct {
 	Apps []AppConfig `yaml:"apps"`
 }
 
+type Tunnel string
+
+const (
+	TunnelPublic  Tunnel = "public"
+	TunnelPrivate Tunnel = "private"
+)
+
+func (t Tunnel) IsPrivate() bool { return t == TunnelPrivate }
+
 type AppConfig struct {
 	Repo            string         `yaml:"repo"`
 	Name            string         `yaml:"name"`
@@ -29,6 +38,7 @@ type AppConfig struct {
 	RepoDir         string         `yaml:"path"`
 	Healthcheck     string         `yaml:"healthcheck"`
 	Hosts           []string       `yaml:"hosts"`
+	Tunnel          Tunnel         `yaml:"tunnel,omitempty"`
 	AppPort         int            `yaml:"app_port"`
 	AppPortSet      bool           `yaml:"-"`
 	HealthcheckPath string         `yaml:"healthcheck_path"`
@@ -127,6 +137,30 @@ func (a *AppConfig) Normalize() error {
 	}
 	a.Hosts = hosts
 
+	a.Tunnel = Tunnel(strings.ToLower(strings.TrimSpace(string(a.Tunnel))))
+	if a.Tunnel == "" {
+		a.Tunnel = TunnelPublic
+		for _, host := range a.Hosts {
+			if isTailnetHost(host) {
+				a.Tunnel = TunnelPrivate
+				break
+			}
+		}
+	}
+	if a.Tunnel != TunnelPublic && a.Tunnel != TunnelPrivate {
+		return fmt.Errorf("invalid tunnel for %s: %q (expected %s or %s)", a.Repo, a.Tunnel, TunnelPublic, TunnelPrivate)
+	}
+	if a.IsPrivate() {
+		if len(a.Hosts) > 1 {
+			return fmt.Errorf("private tailscale tunnel for %s supports at most one domain: %v", a.Repo, a.Hosts)
+		}
+		for _, host := range a.Hosts {
+			if strings.Contains(host, ".") && !isTailnetHost(host) {
+				return fmt.Errorf("private tailscale tunnel for %s requires a .ts.net domain or a bare name, got %q", a.Repo, host)
+			}
+		}
+	}
+
 	a.HealthcheckPath = strings.TrimSpace(a.HealthcheckPath)
 	if a.HealthcheckPath == "" {
 		a.HealthcheckPath = defaultHealthcheckPath(*a)
@@ -171,6 +205,28 @@ func reposRoot() string {
 
 func storageRoot() string {
 	return envDefault("SINGLESERVER_STORAGE_ROOT", "/srv/storage")
+}
+
+func (a AppConfig) IsPrivate() bool { return a.Tunnel.IsPrivate() }
+
+// QualifiedHost expands a private app's bare label into its MagicDNS name.
+func (a AppConfig) QualifiedHost(host string) string {
+	if !a.IsPrivate() || strings.Contains(host, ".") {
+		return host
+	}
+	domain := tailnetDomain()
+	if domain == "" {
+		return host
+	}
+	return host + "." + domain
+}
+
+func (a AppConfig) QualifiedHosts() []string {
+	hosts := make([]string, len(a.Hosts))
+	for i, host := range a.Hosts {
+		hosts[i] = a.QualifiedHost(host)
+	}
+	return hosts
 }
 
 func defaultHealthcheckPath(app AppConfig) string {
@@ -317,6 +373,7 @@ func (c *Config) Normalize() error {
 	seenRepos := map[string]bool{}
 	seenNames := map[string]string{}
 	seenHosts := map[string]string{}
+	seenServices := map[string]string{}
 	for i := range c.Apps {
 		if err := c.Apps[i].Normalize(); err != nil {
 			return err
@@ -339,6 +396,15 @@ func (c *Config) Normalize() error {
 				return fmt.Errorf("duplicate host in config: %s is used by %s and %s", host, existingRepo, c.Apps[i].Repo)
 			}
 			seenHosts[hostKey] = c.Apps[i].Repo
+		}
+
+		// Distinct hosts can still collapse to one service name, its first label.
+		if c.Apps[i].IsPrivate() {
+			serviceKey := tailscaleServiceName(c.Apps[i])
+			if existingRepo := seenServices[serviceKey]; existingRepo != "" {
+				return fmt.Errorf("duplicate tailscale service in config: %s and %s both resolve to svc:%s; give them distinct first domain labels", existingRepo, c.Apps[i].Repo, serviceKey)
+			}
+			seenServices[serviceKey] = c.Apps[i].Repo
 		}
 	}
 	return nil

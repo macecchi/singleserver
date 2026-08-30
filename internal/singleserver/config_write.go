@@ -52,6 +52,7 @@ func appConfigEntry(app AppConfig) addAppEntry {
 	entry := addAppEntry{
 		repo:            app.Repo,
 		hosts:           app.Hosts,
+		tunnel:          app.Tunnel,
 		healthcheck:     app.Healthcheck,
 		healthcheckPath: "",
 		runtime:         app.Runtime,

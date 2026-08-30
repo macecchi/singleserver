@@ -208,7 +208,9 @@ func cliList(w io.Writer) error {
 			Name:   app.Name,
 			Repo:   app.Repo,
 			Branch: app.Branch,
-			Hosts:  app.Hosts,
+			Hosts:  app.QualifiedHosts(),
+			Tunnel: app.Tunnel,
+			Commit: deployedCommitForApp(app.Name, containers),
 			State:  listStateWord(appSummaryStatus(app, containers, containerErr, journal)),
 		})
 	}
@@ -255,6 +257,8 @@ func cliStatus(w io.Writer) error {
 			depState, depDetail := lastDeployStatusFromJournal(app.Name, journal)
 			views = append(views, AppView{
 				Name:   app.Name,
+				Tunnel: app.Tunnel,
+				Commit: deployedCommitForApp(app.Name, containers),
 				State:  appRuntimeWord(app, containers, containerErr),
 				Deploy: deployView(depState, depDetail),
 				Health: healthView(app),
@@ -456,7 +460,7 @@ func appLiveURL(app AppConfig) string {
 	if len(app.Hosts) == 0 {
 		return ""
 	}
-	return "https://" + app.Hosts[0]
+	return "https://" + app.QualifiedHost(app.Hosts[0])
 }
 
 func cliInspect(args []string, w io.Writer) error {

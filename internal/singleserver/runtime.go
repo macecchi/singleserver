@@ -2,6 +2,7 @@ package singleserver
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -100,6 +101,29 @@ func runningAppContainers() (map[string]string, error) {
 		}
 	}
 	return containers, nil
+}
+
+var commitPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+// Kamal tags the container version with the git SHA; an arbitrary --version is not a commit.
+func deployedCommitFromContainer(container string) string {
+	idx := strings.LastIndex(container, "-")
+	if idx < 0 {
+		return ""
+	}
+	version := container[idx+1:]
+	if !commitPattern.MatchString(version) {
+		return ""
+	}
+	return version
+}
+
+func deployedCommitForApp(appName string, containers map[string]string) string {
+	container, ok := containerForApp(appName, containers)
+	if !ok {
+		return ""
+	}
+	return deployedCommitFromContainer(container)
 }
 
 func containerForApp(appName string, containers map[string]string) (string, bool) {

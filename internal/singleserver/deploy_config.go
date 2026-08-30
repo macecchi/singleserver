@@ -105,7 +105,7 @@ func GeneratedDeployYAML(app AppConfig) ([]byte, error) {
 			Context: ".",
 		},
 		Proxy: kamalProxy{
-			Hosts:          app.Hosts,
+			Hosts:          app.QualifiedHosts(),
 			AppPort:        app.AppPort,
 			SSL:            false,
 			ForwardHeaders: true,

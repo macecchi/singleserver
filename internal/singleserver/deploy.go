@@ -174,6 +174,9 @@ func (m *DeployManager) runHealthcheck(app AppConfig, runID string) error {
 	}
 
 	client := healthcheckClient()
+	if app.IsPrivate() || isTailnetURL(app.Healthcheck) {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 	deadline := time.Now().Add(2 * time.Minute)
 	var lastErr error
 	for time.Now().Before(deadline) {

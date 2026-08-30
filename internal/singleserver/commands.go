@@ -80,6 +80,8 @@ var cliCommands = []*command{
 				Flags: []flagSpec{
 					{"--auth-key <key>", "Auth key for an unattended join"},
 					{"--hostname <name>", "Hostname to register on the tailnet"},
+					{"--oauth-client-id <id>", "Tailnet OAuth client for private app services (with --oauth-client-secret)"},
+					{"--oauth-client-secret <secret>", "Secret of the tailnet OAuth client"},
 				},
 			},
 			{
@@ -143,6 +145,7 @@ var cliCommands = []*command{
 		Flags: append([]flagSpec{
 			{"--name <name>", "App name override (default derived from the repo)"},
 			{"--domain <host>", "Public domain to route to the app; repeat for several"},
+			{"--tunnel <public|private>", "Serve publicly through Cloudflare (default) or only to your tailnet"},
 			{"--env <KEY=value>", "Environment variable stored on the server and injected at deploy; repeat for several"},
 		}, append(appSettingsFlagHelp, flagSpec{"--no-deploy", "Configure without deploying immediately"})...),
 		Run: func(args []string, w io.Writer, logger *log.Logger) error {
@@ -260,7 +263,7 @@ var cliCommands = []*command{
 				Name:    "add",
 				Summary: "Route a domain to an app",
 				Usage:   "<app> <domain> [--no-deploy]",
-				Args:    []argSpec{{"<app>", "App to route to"}, {"<domain>", "Hostname to route, like app.example.com"}},
+				Args:    []argSpec{{"<app>", "App to route to"}, {"<domain>", "Hostname to route, like app.example.com (a .ts.net name for private apps)"}},
 				Flags:   []flagSpec{{"--no-deploy", "Update config and DNS without deploying"}},
 			},
 			{

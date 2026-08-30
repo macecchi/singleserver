@@ -1,7 +1,6 @@
 package singleserver
 
 import (
-	"bufio"
 	"errors"
 	"flag"
 	"fmt"
@@ -185,7 +184,7 @@ func inspectEditRepo(app AppConfig) (editPromptContext, error) {
 }
 
 func promptEditOptions(app AppConfig, opts editOptions, input io.Reader, w io.Writer, ctx editPromptContext) (editOptions, error) {
-	p := addPrompter{reader: bufio.NewReader(input), w: w}
+	p := addPrompter{reader: promptReaderFor(input), w: w}
 	fmt.Fprintf(w, "Editing %s (%s on %s).\n", app.Name, app.Repo, ctx.targetBranch)
 
 	mode, err := promptEditBuildMode(app, p, ctx)

@@ -57,6 +57,8 @@ type AppView struct {
 	Repo   string      `json:"repo,omitempty"`
 	Branch string      `json:"branch,omitempty"`
 	Hosts  []string    `json:"hosts,omitempty"`
+	Tunnel Tunnel      `json:"tunnel,omitempty"`
+	Commit string      `json:"commit,omitempty"`
 	State  string      `json:"state"`
 	Deploy *DeployView `json:"deploy,omitempty"`
 	Health *HealthView `json:"health,omitempty"`
@@ -240,7 +242,9 @@ func (o *Output) renderList() {
 		cell("APP", bold("APP")),
 		cell("STATUS", bold("STATUS")),
 		cell("DOMAIN", bold("DOMAIN")),
+		cell("TUNNEL", bold("TUNNEL")),
 		cell("REPO", bold("REPO")),
+		cell("COMMIT", bold("COMMIT")),
 	}}
 	for _, a := range o.apps {
 		st := wordState(a.State)
@@ -248,7 +252,9 @@ func (o *Output) renderList() {
 			plainCell(a.Name),
 			cell("● "+a.State, paint(stateColor(st), "● "+a.State)),
 			domainCell(a.Hosts),
+			tunnelCell(a.Tunnel),
 			repoCell(a.Repo, a.Branch),
+			commitCell(a.Commit),
 		})
 	}
 	writeTable(o.w, rows, 2)
@@ -279,6 +285,12 @@ func (o *Output) renderStatus() {
 	for _, a := range o.apps {
 		fmt.Fprintln(o.w)
 		fmt.Fprintf(o.w, "%s %s%s%s\n", dot(wordState(a.State)), bold(a.Name), strings.Repeat(" ", nameWidth-len(a.Name)+3), dim(a.State))
+		if a.Tunnel != "" {
+			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("tunnel"), " ", a.Tunnel)
+		}
+		if a.Commit != "" {
+			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("commit"), " ", shortSHA(a.Commit))
+		}
 		if a.Deploy != nil {
 			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("deploy"), mark(wordState(a.Deploy.State)), a.Deploy.Detail)
 		}
@@ -355,6 +367,24 @@ func domainCell(hosts []string) tcell {
 	}
 	extra := fmt.Sprintf(" +%d", len(hosts)-1)
 	return cell(hosts[0]+extra, hosts[0]+dim(extra))
+}
+
+func tunnelCell(tunnel Tunnel) tcell {
+	switch tunnel {
+	case "":
+		return cell("–", dim("–"))
+	case TunnelPrivate:
+		return plainCell(string(tunnel))
+	default:
+		return cell(string(tunnel), dim(string(tunnel)))
+	}
+}
+
+func commitCell(commit string) tcell {
+	if commit == "" {
+		return cell("–", dim("–"))
+	}
+	return plainCell(shortSHA(commit))
 }
 
 func repoCell(repo, branch string) tcell {

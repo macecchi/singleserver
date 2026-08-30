@@ -28,6 +28,7 @@ type addOptions struct {
 	name           string
 	hosts          []string
 	env            map[string]string
+	tunnel         string
 	noDeploy       bool
 	nonInteractive bool
 	hostsSet       bool
@@ -84,6 +85,7 @@ type addAppEntry struct {
 	branch          string
 	repoDir         string
 	hosts           []string
+	tunnel          Tunnel
 	healthcheck     string
 	healthcheckPath string
 	runtime         string
@@ -163,6 +165,18 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 	if existing, exists := config.AppByName(app.Name); exists {
 		return fmt.Errorf("app name %s is already used by %s; rerun with --name <unique-name>", app.Name, existing.Repo)
 	}
+	if app.IsPrivate() {
+		service := tailscaleServiceName(app)
+		for _, existing := range config.Apps {
+			if !existing.IsPrivate() || tailscaleServiceName(existing) != service {
+				continue
+			}
+			return fmt.Errorf("svc:%s is already served by %s; private apps are named after the first label of their domain, so rerun with a --domain whose first label is unique", service, existing.Repo)
+		}
+		if err := ensureTailscaleServicesReady(w); err != nil {
+			return err
+		}
+	}
 	if _, err := GeneratedDeployYAML(app); err != nil {
 		return err
 	}
@@ -195,20 +209,14 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 
 	syncedHosts := []string{}
 	for _, host := range app.Hosts {
-		if err := syncCloudflareAppDomainFunc(host, true, w); err != nil {
-			for _, syncedHost := range syncedHosts {
-				_ = syncCloudflareAppDomainFunc(syncedHost, false, io.Discard)
-			}
-			return err
+		if err := syncAppDomainFunc(app, host, true, w); err != nil {
+			return errors.Join(err, rollbackSyncedHosts(app, syncedHosts))
 		}
 		syncedHosts = append(syncedHosts, host)
 	}
 
 	if err := writeFileAtomic(configPath, updated); err != nil {
-		for _, syncedHost := range syncedHosts {
-			_ = syncCloudflareAppDomainFunc(syncedHost, false, io.Discard)
-		}
-		return err
+		return errors.Join(err, rollbackSyncedHosts(app, syncedHosts))
 	}
 	writeCheck(w, app.Name, "config", "ok", configPath, "added")
 
@@ -264,6 +272,7 @@ func parseAddArgs(args []string, w io.Writer) (addOptions, error) {
 	fs.Var((*stringListFlag)(&opts.hosts), "domain", "app domain")
 	opts.env = map[string]string{}
 	fs.Var(envMapFlag(opts.env), "env", "environment variable KEY=value (repeatable)")
+	fs.StringVar(&opts.tunnel, "tunnel", "", "tunnel type: public (default) or private")
 	fs.BoolVar(&opts.noDeploy, "no-deploy", false, "configure without deploying immediately")
 
 	appPort := bindAppSettingsFlags(fs, &opts.appSettings)
@@ -306,7 +315,7 @@ type flushWriter interface {
 }
 
 func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addPromptContext) (addOptions, error) {
-	p := addPrompter{reader: bufio.NewReader(input), w: w}
+	p := addPrompter{reader: promptReaderFor(input), w: w}
 	fmt.Fprintf(w, "Interactive setup for %s on %s.\n", opts.repo, ctx.targetBranch)
 	if ctx.hasDockerfile {
 		fmt.Fprintln(w, "Dockerfile found. Single Server will use it as-is.")
@@ -328,8 +337,20 @@ func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addProm
 		}
 	}
 
+	if opts.tunnel == "" {
+		tunnel, err := p.askChoiceDefault("Tunnel type", []string{string(TunnelPublic), string(TunnelPrivate)}, string(TunnelPublic))
+		if err != nil {
+			return addOptions{}, err
+		}
+		opts.tunnel = tunnel
+	}
+
 	if len(opts.hosts) == 0 {
-		value, err := p.askOptional("App domain (optional)")
+		label := "App domain (optional)"
+		if Tunnel(opts.tunnel).IsPrivate() {
+			label = "Tailscale domain (optional, e.g. scoreboard.tailnet-name.ts.net; defaults to the app name on your tailnet)"
+		}
+		value, err := p.askOptional(label)
 		if err != nil {
 			return addOptions{}, err
 		}
@@ -574,6 +595,7 @@ func addEquivalentCommand(opts addOptions) string {
 	for _, host := range opts.hosts {
 		appendFlagValue("--domain", host)
 	}
+	appendFlagValue("--tunnel", opts.tunnel)
 	parts = appendAppSettingsFlags(parts, opts.appSettings, false)
 	for _, key := range sortedEnvKeys(opts.env) {
 		parts = append(parts, "--env", shellQuote(key+"="+opts.env[key]))
@@ -620,6 +642,7 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 		Name:            o.name,
 		Branch:          o.branch,
 		Hosts:           o.hosts,
+		Tunnel:          Tunnel(o.tunnel),
 		Healthcheck:     o.healthcheck,
 		HealthcheckPath: o.healthcheckPath,
 		Runtime:         o.runtime,
@@ -636,9 +659,13 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 	if err := app.Normalize(); err != nil {
 		return AppConfig{}, addAppEntry{}, err
 	}
+	if app.IsPrivate() && len(app.Hosts) == 0 {
+		app.Hosts = []string{app.Name}
+	}
 	entry := addAppEntry{
 		repo:            app.Repo,
 		hosts:           app.Hosts,
+		tunnel:          app.Tunnel,
 		healthcheck:     app.Healthcheck,
 		healthcheckPath: "",
 		runtime:         app.Runtime,
@@ -744,6 +771,9 @@ func (e addAppEntry) yamlNode() *yaml.Node {
 			hostNode.Content = append(hostNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: host})
 		}
 		appendNodePair(node, "hosts", hostNode)
+	}
+	if e.tunnel.IsPrivate() {
+		appendScalarPair(node, "tunnel", string(e.tunnel))
 	}
 	if e.healthcheck != "" {
 		appendScalarPair(node, "healthcheck", e.healthcheck)
@@ -851,6 +881,16 @@ func writeFileAtomic(path string, body []byte) error {
 	return os.Rename(tmpPath, path)
 }
 
+func rollbackSyncedHosts(app AppConfig, hosts []string) error {
+	var errs []error
+	for _, host := range hosts {
+		if err := syncAppDomainFunc(app, host, false, io.Discard); err != nil {
+			errs = append(errs, fmt.Errorf("rollback of %s failed: %w", host, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func normalizeAddArgs(args []string) []string {
 	return normalizeFlagArgs(args, addFlagTakesValue)
 }
@@ -861,7 +901,7 @@ func addFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "name", "domain", "env":
+	case "name", "domain", "env", "tunnel":
 		return true
 	default:
 		return appSettingsFlagTakesValue(arg)
