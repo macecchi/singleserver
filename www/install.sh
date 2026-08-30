@@ -333,6 +333,8 @@ UNIT_EOF
 install_binary() {
   channel="${SINGLESERVER_CHANNEL:-stable}"
   tmp_dir="$(mktemp -d)"
+  # A failed download (set -e) must not leave a partial binary behind.
+  trap 'rm -rf "$tmp_dir"' EXIT
   tmp_bin="$tmp_dir/singleserver-linux-${binary_arch}"
 
   if [ -n "${SINGLESERVER_LOCAL_BINARY:-}" ]; then

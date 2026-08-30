@@ -103,34 +103,47 @@ func vipServicePath(name string) string {
 
 var ensureVIPServiceFunc = ensureVIPService
 
-func ensureVIPService(token, name, comment string) error {
+// ensureVIPService creates or updates the app's VIP service and reports whether
+// it created one. An existing service is adopted only when it already carries
+// the singleserver tag, and keeps the addrs Tailscale allocated for it.
+func ensureVIPService(token, name, comment string) (bool, error) {
 	svc := vipService{
 		Name:    "svc:" + name,
 		Comment: comment,
 		Ports:   []string{"tcp:443"},
 		Tags:    []string{tailscaleServiceTag},
 	}
+	created := true
 	status, body, err := tailscaleAPIRequest(token, http.MethodGet, vipServicePath(name), nil)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if status == http.StatusOK {
+	switch status {
+	case http.StatusOK:
 		var existing vipService
-		if err := json.Unmarshal(body, &existing); err == nil {
-			svc.Addrs = existing.Addrs
+		if err := json.Unmarshal(body, &existing); err != nil {
+			return false, fmt.Errorf("reading tailscale service svc:%s: %w", name, err)
 		}
+		if !containsFold(existing.Tags, tailscaleServiceTag) {
+			return false, fmt.Errorf("svc:%s already exists in the tailnet and was not created by Single Server; rerun with a --domain whose first label is unique, or delete the service in the admin console", name)
+		}
+		svc.Addrs = existing.Addrs
+		created = false
+	case http.StatusNotFound:
+	default:
+		return false, fmt.Errorf("checking tailscale service svc:%s returned HTTP %d: %s", name, status, strings.TrimSpace(string(body)))
 	}
 	status, body, err = tailscaleAPIRequest(token, http.MethodPut, vipServicePath(name), svc)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
 		if strings.Contains(string(body), "not a service") {
-			return fmt.Errorf("the tailnet already has a machine named %q, which blocks the service's DNS name; remove that machine in the admin console (Machines) and retry: HTTP %d: %s", name, status, strings.TrimSpace(string(body)))
+			return false, fmt.Errorf("the tailnet already has a machine named %q, which blocks the service's DNS name; remove that machine in the admin console (Machines) and retry: HTTP %d: %s", name, status, strings.TrimSpace(string(body)))
 		}
-		return fmt.Errorf("creating tailscale service svc:%s returned HTTP %d: %s", name, status, strings.TrimSpace(string(body)))
+		return false, fmt.Errorf("creating tailscale service svc:%s returned HTTP %d: %s", name, status, strings.TrimSpace(string(body)))
 	}
-	return nil
+	return created, nil
 }
 
 var deleteVIPServiceFunc = deleteVIPService
@@ -192,11 +205,12 @@ func promptTailscaleOAuthClient(w io.Writer) (string, string, error) {
 }
 
 // The app is served at the service's MagicDNS name, so the service name has to
-// be the host's first label or the two never match.
+// be the host's first label or the two never match. Service names are lowercase
+// DNS labels, while hosts keep the case the user typed.
 func tailscaleServiceNameForHost(hostname, appName string) string {
-	hostname = strings.TrimSpace(hostname)
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	if hostname == "" {
-		return appName
+		return strings.ToLower(appName)
 	}
 	if label, _, ok := strings.Cut(hostname, "."); ok && label != "" {
 		return label
@@ -213,6 +227,40 @@ func tailscaleServiceName(app AppConfig) string {
 	return tailscaleServiceNameForHost(host, app.Name)
 }
 
+var errTailscaleOAuthMissing = errors.New("a Tailscale OAuth client (scope: services write) is required for private apps; run `singleserver connect tailscale --oauth-client-id <id> --oauth-client-secret <secret>` or set TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_OAUTH_CLIENT_SECRET")
+
+func storeTailscaleOAuthClient(state *TailscaleState, id, secret string, w io.Writer) error {
+	state.OAuthClientID = id
+	state.OAuthClientSecret = secret
+	if err := writeTailscaleState(state); err != nil {
+		return err
+	}
+	writeCheck(w, "tailscale", "oauth", "ok", "stored for private app services")
+	return nil
+}
+
+// ensureTailscaleServicesReady checks that an OAuth client for the services API
+// is stored before provisioning starts, prompting for one when it can. Keeping
+// the prompt here, at command level, means syncTailscaleAppDomain never blocks
+// on stdin — its rollback callers run it against io.Discard.
+func ensureTailscaleServicesReady(w io.Writer) error {
+	state, err := loadTailscaleState()
+	if err != nil {
+		return err
+	}
+	if id, secret := tailscaleOAuthCredentials(state); id != "" && secret != "" {
+		return nil
+	}
+	id, secret, err := promptTailscaleOAuthClient(w)
+	if err != nil {
+		return err
+	}
+	if id == "" || secret == "" {
+		return errTailscaleOAuthMissing
+	}
+	return storeTailscaleOAuthClient(state, id, secret, w)
+}
+
 func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Writer) error {
 	hostname = app.QualifiedHost(hostname)
 	serviceName := tailscaleServiceNameForHost(hostname, app.Name)
@@ -227,20 +275,24 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 			writeCheck(w, app.Name, "tailscale_service", "pending", "no OAuth client stored; delete svc:"+serviceName+" in the admin console")
 			return unserveTailscaleService(app.Name, serviceName, w)
 		}
-		id, secret, err := promptTailscaleOAuthClient(w)
-		if err != nil {
-			return err
+		return errTailscaleOAuthMissing
+	}
+
+	if add {
+		// The service answers at <label>.<tailnet>; a host that cannot be
+		// qualified, or one on another tailnet, would never match it.
+		if !strings.Contains(hostname, ".") {
+			return fmt.Errorf("cannot qualify %s: this server's tailnet is unknown; run `singleserver connect tailscale` first", hostname)
 		}
-		if id == "" || secret == "" {
-			return errors.New("a Tailscale OAuth client (scope: services write) is required for private apps; run `singleserver connect tailscale --oauth-client-id <id> --oauth-client-secret <secret>` or set TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_OAUTH_CLIENT_SECRET")
+		if domain := tailnetDomainFromHostname(state.Hostname); domain != "" && !strings.HasSuffix(strings.ToLower(hostname), "."+strings.ToLower(domain)) {
+			return fmt.Errorf("%s is not on this server's tailnet; the app is served at %s.%s, so use that domain (or none)", hostname, serviceName, domain)
 		}
-		clientID, clientSecret = id, secret
-		state.OAuthClientID = id
-		state.OAuthClientSecret = secret
-		if err := writeTailscaleState(state); err != nil {
-			return err
+
+		// Service hosts must have tag-based identity. Checked before spending
+		// an API roundtrip on a token that could not be used.
+		if status, err := currentTailscaleStatus(); err == nil && status.Self != nil && len(status.Self.Tags) == 0 {
+			return errors.New("this server's Tailscale node has no tags, and only tagged nodes can host Tailscale Services; add " + tailscaleServiceTag + " to this machine in the admin console (Machines -> Edit ACL tags)")
 		}
-		writeCheck(w, app.Name, "tailscale_oauth", "ok", "stored for future private apps")
 	}
 
 	token, err := tailscaleAPIToken(clientID, clientSecret)
@@ -249,19 +301,18 @@ func syncTailscaleAppDomain(app AppConfig, hostname string, add bool, w io.Write
 	}
 
 	if add {
-		// Service hosts must have tag-based identity.
-		if status, err := currentTailscaleStatus(); err == nil && status.Self != nil && len(status.Self.Tags) == 0 {
-			return errors.New("this server's Tailscale node has no tags, and only tagged nodes can host Tailscale Services; add " + tailscaleServiceTag + " to this machine in the admin console (Machines -> Edit ACL tags)")
-		}
-
 		writeCheck(w, app.Name, "tailscale_service", "creating", "svc:"+serviceName)
-		if err := ensureVIPServiceFunc(token, serviceName, "Single Server app "+app.Name); err != nil {
+		created, err := ensureVIPServiceFunc(token, serviceName, "Single Server app "+app.Name)
+		if err != nil {
 			return err
 		}
 
 		writeCheck(w, app.Name, "tailscale_serve", "configuring", "svc:"+serviceName+" -> 127.0.0.1:80")
 		serveArgs := []string{"serve", "--service=svc:" + serviceName, "--https=443", "http://127.0.0.1:80"}
 		if err := commandRunFunc(30*time.Second, "tailscale", serveArgs...); err != nil {
+			if created {
+				_ = deleteVIPServiceFunc(token, serviceName)
+			}
 			return fmt.Errorf("failed to serve svc:%s: %w", serviceName, err)
 		}
 

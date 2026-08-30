@@ -286,11 +286,10 @@ func (o *Output) renderStatus() {
 		fmt.Fprintln(o.w)
 		fmt.Fprintf(o.w, "%s %s%s%s\n", dot(wordState(a.State)), bold(a.Name), strings.Repeat(" ", nameWidth-len(a.Name)+3), dim(a.State))
 		if a.Tunnel != "" {
-			// A setting, not a check: the spaces stand in for the mark.
-			fmt.Fprintf(o.w, "    %s     %s\n", dim("tunnel"), a.Tunnel)
+			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("tunnel"), " ", a.Tunnel)
 		}
 		if a.Commit != "" {
-			fmt.Fprintf(o.w, "    %s     %s\n", dim("commit"), shortCommit(a.Commit))
+			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("commit"), " ", shortSHA(a.Commit))
 		}
 		if a.Deploy != nil {
 			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("deploy"), mark(wordState(a.Deploy.State)), a.Deploy.Detail)
@@ -381,18 +380,11 @@ func tunnelCell(tunnel Tunnel) tcell {
 	}
 }
 
-func shortCommit(commit string) string {
-	if len(commit) > 7 {
-		return commit[:7]
-	}
-	return commit
-}
-
 func commitCell(commit string) tcell {
 	if commit == "" {
 		return cell("–", dim("–"))
 	}
-	return plainCell(shortCommit(commit))
+	return plainCell(shortSHA(commit))
 }
 
 func repoCell(repo, branch string) tcell {

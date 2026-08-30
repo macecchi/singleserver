@@ -152,8 +152,17 @@ func (a *AppConfig) Normalize() error {
 	if a.Tunnel != TunnelPublic && a.Tunnel != TunnelPrivate {
 		return fmt.Errorf("invalid tunnel for %s: %q (expected %s or %s)", a.Repo, a.Tunnel, TunnelPublic, TunnelPrivate)
 	}
-	if a.IsPrivate() && len(a.Hosts) > 1 {
-		return fmt.Errorf("private tailscale tunnel for %s supports at most one domain: %v", a.Repo, a.Hosts)
+	if a.IsPrivate() {
+		if len(a.Hosts) > 1 {
+			return fmt.Errorf("private tailscale tunnel for %s supports at most one domain: %v", a.Repo, a.Hosts)
+		}
+		// A private app is served at a MagicDNS name; any other domain would
+		// never match what Kamal's proxy routes.
+		for _, host := range a.Hosts {
+			if strings.Contains(host, ".") && !isTailnetHost(host) {
+				return fmt.Errorf("private tailscale tunnel for %s requires a .ts.net domain or a bare name, got %q", a.Repo, host)
+			}
+		}
 	}
 
 	a.HealthcheckPath = strings.TrimSpace(a.HealthcheckPath)
@@ -396,7 +405,7 @@ func (c *Config) Normalize() error {
 
 		// Distinct hosts can still collapse to one service name, its first label.
 		if c.Apps[i].IsPrivate() {
-			serviceKey := strings.ToLower(tailscaleServiceName(c.Apps[i]))
+			serviceKey := tailscaleServiceName(c.Apps[i])
 			if existingRepo := seenServices[serviceKey]; existingRepo != "" {
 				return fmt.Errorf("duplicate tailscale service in config: %s and %s both resolve to svc:%s; give them distinct first domain labels", existingRepo, c.Apps[i].Repo, serviceKey)
 			}

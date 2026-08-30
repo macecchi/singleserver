@@ -2,6 +2,7 @@ package singleserver
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -102,6 +103,9 @@ func runningAppContainers() (map[string]string, error) {
 	return containers, nil
 }
 
+// commitPattern matches an abbreviated-to-full lowercase git SHA.
+var commitPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
 // Kamal names containers <service>-<role>-<version>, and builds tag the version
 // with the git SHA. An arbitrary --version is not a commit, so report nothing.
 func deployedCommitFromContainer(container string) string {
@@ -110,14 +114,8 @@ func deployedCommitFromContainer(container string) string {
 		return ""
 	}
 	version := container[idx+1:]
-	if len(version) < 7 || len(version) > 40 {
+	if !commitPattern.MatchString(version) {
 		return ""
-	}
-	for _, r := range version {
-		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
-		if !isHex {
-			return ""
-		}
 	}
 	return version
 }

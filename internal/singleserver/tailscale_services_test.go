@@ -49,7 +49,7 @@ func TestEnsureVIPServicePreservesAddrs(t *testing.T) {
 	withFakeTailscaleAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			_ = json.NewEncoder(w).Encode(vipService{Name: "svc:app", Addrs: []string{"100.99.0.1"}})
+			_ = json.NewEncoder(w).Encode(vipService{Name: "svc:app", Addrs: []string{"100.99.0.1"}, Tags: []string{tailscaleServiceTag}})
 		case http.MethodPut:
 			if err := json.NewDecoder(r.Body).Decode(&putBody); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -61,8 +61,12 @@ func TestEnsureVIPServicePreservesAddrs(t *testing.T) {
 		}
 	})
 
-	if err := ensureVIPService("tok", "app", "Single Server app app"); err != nil {
+	created, err := ensureVIPService("tok", "app", "Single Server app app")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("adopting an existing service is not creating one")
 	}
 	if putBody.Name != "svc:app" || len(putBody.Addrs) != 1 || putBody.Addrs[0] != "100.99.0.1" {
 		t.Fatalf("expected existing addrs preserved, got %+v", putBody)
@@ -72,6 +76,55 @@ func TestEnsureVIPServicePreservesAddrs(t *testing.T) {
 	}
 	if len(putBody.Ports) != 1 || putBody.Ports[0] != "tcp:443" {
 		t.Fatalf("expected tcp:443 port, got %+v", putBody.Ports)
+	}
+}
+
+func TestEnsureVIPServiceCreatesWhenMissing(t *testing.T) {
+	withFakeTailscaleAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			http.NotFound(w, r)
+		case http.MethodPut:
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	created, err := ensureVIPService("tok", "app", "Single Server app app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("a service made from a 404 was created")
+	}
+}
+
+func TestEnsureVIPServiceRefusesForeignService(t *testing.T) {
+	withFakeTailscaleAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			t.Fatal("a foreign service must not be overwritten")
+		}
+		_ = json.NewEncoder(w).Encode(vipService{Name: "svc:app", Tags: []string{"tag:other"}})
+	})
+
+	_, err := ensureVIPService("tok", "app", "Single Server app app")
+	if err == nil || !strings.Contains(err.Error(), "not created by Single Server") {
+		t.Fatalf("expected a foreign-service error, got: %v", err)
+	}
+}
+
+func TestEnsureVIPServiceFailsOnTransientGetError(t *testing.T) {
+	withFakeTailscaleAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			t.Fatal("a PUT after a failed GET could drop the service's addrs")
+		}
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	})
+
+	_, err := ensureVIPService("tok", "app", "Single Server app app")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 429") {
+		t.Fatalf("expected the GET failure surfaced, got: %v", err)
 	}
 }
 

@@ -166,12 +166,15 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 		return fmt.Errorf("app name %s is already used by %s; rerun with --name <unique-name>", app.Name, existing.Repo)
 	}
 	if app.IsPrivate() {
-		service := strings.ToLower(tailscaleServiceName(app))
+		service := tailscaleServiceName(app)
 		for _, existing := range config.Apps {
-			if !existing.IsPrivate() || !strings.EqualFold(tailscaleServiceName(existing), service) {
+			if !existing.IsPrivate() || tailscaleServiceName(existing) != service {
 				continue
 			}
 			return fmt.Errorf("svc:%s is already served by %s; private apps are named after the first label of their domain, so rerun with a --domain whose first label is unique", service, existing.Repo)
+		}
+		if err := ensureTailscaleServicesReady(w); err != nil {
+			return err
 		}
 	}
 	if _, err := GeneratedDeployYAML(app); err != nil {
@@ -318,7 +321,7 @@ type flushWriter interface {
 }
 
 func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addPromptContext) (addOptions, error) {
-	p := addPrompter{reader: bufio.NewReader(input), w: w}
+	p := addPrompter{reader: promptReaderFor(input), w: w}
 	fmt.Fprintf(w, "Interactive setup for %s on %s.\n", opts.repo, ctx.targetBranch)
 	if ctx.hasDockerfile {
 		fmt.Fprintln(w, "Dockerfile found. Single Server will use it as-is.")
@@ -341,7 +344,7 @@ func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addProm
 	}
 
 	if opts.tunnel == "" {
-		tunnel, err := p.askChoice("Tunnel type", []string{string(TunnelPublic), string(TunnelPrivate)})
+		tunnel, err := p.askChoiceDefault("Tunnel type", []string{string(TunnelPublic), string(TunnelPrivate)}, string(TunnelPublic))
 		if err != nil {
 			return addOptions{}, err
 		}
@@ -351,7 +354,7 @@ func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addProm
 	if len(opts.hosts) == 0 {
 		label := "App domain (optional)"
 		if Tunnel(opts.tunnel).IsPrivate() {
-			label = "Tailscale private domain (e.g. scoreboard.ts.net, optional)"
+			label = "Tailscale domain (optional, e.g. scoreboard.tailnet-name.ts.net; defaults to the app name on your tailnet)"
 		}
 		value, err := p.askOptional(label)
 		if err != nil {
@@ -776,7 +779,8 @@ func (e addAppEntry) yamlNode() *yaml.Node {
 		}
 		appendNodePair(node, "hosts", hostNode)
 	}
-	if e.tunnel != "" && e.tunnel != TunnelPublic {
+	// The default tunnel stays out of the config.
+	if e.tunnel.IsPrivate() {
 		appendScalarPair(node, "tunnel", string(e.tunnel))
 	}
 	if e.healthcheck != "" {

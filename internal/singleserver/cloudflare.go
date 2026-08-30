@@ -558,10 +558,6 @@ func syncAppDomain(app AppConfig, hostname string, add bool, w io.Writer) error 
 
 var syncAppDomainFunc = syncAppDomain
 
-var syncCloudflareAppDomainFunc = func(hostname string, add bool, w io.Writer) error {
-	return syncCloudflareAppDomain(hostname, add, w)
-}
-
 type cloudflareDomainSyncOps struct {
 	upsertRecord func(hostname string) error
 	deleteRecord func(hostname string) error

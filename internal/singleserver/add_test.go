@@ -445,6 +445,21 @@ func TestPromptAddOptionsCollectsEnv(t *testing.T) {
 	}
 }
 
+func TestPromptAddOptionsTunnelDefaultsToPublic(t *testing.T) {
+	opts := addOptions{repo: "acme/app"}
+	var out bytes.Buffer
+	got, err := promptAddOptions(opts, strings.NewReader("\n\n\n\n\n\n"), &out, addPromptContext{
+		hasDockerfile: true,
+		targetBranch:  "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.tunnel != string(TunnelPublic) {
+		t.Fatalf("pressing Enter should keep the default public tunnel, got %q", got.tunnel)
+	}
+}
+
 func TestAddOptionsPersistPrivateTunnel(t *testing.T) {
 	opts := addOptions{repo: "acme/scoreboard", tunnel: "private"}
 	app, entry, err := opts.app()

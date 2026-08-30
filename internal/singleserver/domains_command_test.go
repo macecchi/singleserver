@@ -365,6 +365,56 @@ func TestDomainsVerifyUsesCommandRunFuncForResolverDNS(t *testing.T) {
 	}
 }
 
+func TestDomainsRemoveAcceptsQualifiedSpellingOfBareHost(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "apps.yml")
+	t.Setenv("SINGLESERVER_CONFIG", configPath)
+	t.Setenv("SINGLESERVER_STATE_DIR", dir)
+	if err := writeTailscaleState(&TailscaleState{Hostname: "box.corp.ts.net"}); err != nil {
+		t.Fatal(err)
+	}
+	// `domains list` shows the qualified name for the bare-stored host, so
+	// remove has to accept that spelling, and the healthcheck pointing at it
+	// has to go with the host.
+	if err := os.WriteFile(configPath, []byte(`apps:
+  - repo: acme/scoreboard
+    tunnel: private
+    hosts:
+      - scoreboard
+    healthcheck: https://scoreboard.corp.ts.net/up
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	originalSync := syncAppDomainFunc
+	t.Cleanup(func() { syncAppDomainFunc = originalSync })
+	syncedHost := ""
+	syncAppDomainFunc = func(app AppConfig, hostname string, add bool, w io.Writer) error {
+		syncedHost = hostname
+		return nil
+	}
+
+	var out bytes.Buffer
+	logger := log.New(io.Discard, "", 0)
+	if err := cliDomains([]string{"remove", "scoreboard", "scoreboard.corp.ts.net", "--no-deploy"}, &out, logger); err != nil {
+		t.Fatal(err)
+	}
+	if syncedHost != "scoreboard" {
+		t.Fatalf("expected the stored spelling synced, got %q", syncedHost)
+	}
+
+	config, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Apps[0].Hosts) != 0 {
+		t.Fatalf("expected the host removed, got %#v", config.Apps[0].Hosts)
+	}
+	if config.Apps[0].Healthcheck != "" {
+		t.Fatalf("expected the qualified healthcheck cleared, got %s", config.Apps[0].Healthcheck)
+	}
+}
+
 func TestDomainsAddRejectsTailnetDomainOnPublicApp(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "apps.yml")

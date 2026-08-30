@@ -429,6 +429,24 @@ func TestNormalizeInfersTunnelFromHosts(t *testing.T) {
 	}
 }
 
+func TestNormalizeRejectsPublicDomainOnPrivateApp(t *testing.T) {
+	app := AppConfig{Repo: "acme/scoreboard", Tunnel: TunnelPrivate, Hosts: []string{"scores.example.com"}}
+	err := app.Normalize()
+	if err == nil {
+		t.Fatal("expected a public domain on a private app to be rejected")
+	}
+	if !strings.Contains(err.Error(), ".ts.net") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, host := range []string{"scores", "scores.corp.ts.net"} {
+		app := AppConfig{Repo: "acme/scoreboard", Tunnel: TunnelPrivate, Hosts: []string{host}}
+		if err := app.Normalize(); err != nil {
+			t.Fatalf("%s should be a valid private host: %v", host, err)
+		}
+	}
+}
+
 func TestNormalizeCapsPrivateAppsAfterDeduplicatingHosts(t *testing.T) {
 	app := AppConfig{Repo: "acme/scoreboard", Tunnel: TunnelPrivate, Hosts: []string{"scores.corp.ts.net", "scores.corp.ts.net"}}
 	if err := app.Normalize(); err != nil {

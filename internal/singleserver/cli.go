@@ -208,7 +208,7 @@ func cliList(w io.Writer) error {
 			Name:   app.Name,
 			Repo:   app.Repo,
 			Branch: app.Branch,
-			Hosts:  app.Hosts,
+			Hosts:  app.QualifiedHosts(),
 			Tunnel: app.Tunnel,
 			Commit: deployedCommitForApp(app.Name, containers),
 			State:  listStateWord(appSummaryStatus(app, containers, containerErr, journal)),
@@ -460,7 +460,7 @@ func appLiveURL(app AppConfig) string {
 	if len(app.Hosts) == 0 {
 		return ""
 	}
-	return "https://" + app.Hosts[0]
+	return "https://" + app.QualifiedHost(app.Hosts[0])
 }
 
 func cliInspect(args []string, w io.Writer) error {
