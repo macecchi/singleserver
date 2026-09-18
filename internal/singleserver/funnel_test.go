@@ -732,3 +732,16 @@ func TestWriteConfigKeepsPrivateTunnelWithoutOtherSettings(t *testing.T) {
 		t.Fatalf("private tunnel must survive a rewrite:\n%s", body)
 	}
 }
+
+func TestFunnelContainerIsNotTheAppContainer(t *testing.T) {
+	containers := map[string]string{"ledger-funnel": "ledger-funnel", "ledger-web-abc1234": "ledger-web-abc1234"}
+	if got := deployedCommitForApp("ledger", containers); got != "abc1234" {
+		t.Fatalf("expected the web container's commit, got %q", got)
+	}
+	if got := matchingAppContainerNames("ledger", "ledger-funnel\nledger-web-abc1234\nother-web-1\n"); len(got) != 1 || got[0] != "ledger-web-abc1234" {
+		t.Fatalf("funnel container must not count as an app container: %#v", got)
+	}
+	if _, ok := containerForApp("ledger", map[string]string{"ledger-funnel": "ledger-funnel"}); ok {
+		t.Fatal("an app with only its funnel container running is not running")
+	}
+}

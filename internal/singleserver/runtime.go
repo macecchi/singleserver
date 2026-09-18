@@ -81,6 +81,9 @@ func matchingAppContainerNames(appName string, output string) []string {
 		if name == "" {
 			continue
 		}
+		if name == funnelContainerName(AppConfig{Name: appName}) {
+			continue
+		}
 		if strings.HasPrefix(name, appName+"-") || name == appName {
 			names = append(names, name)
 		}
@@ -134,6 +137,9 @@ func containerForApp(appName string, containers map[string]string) (string, bool
 		return container, true
 	}
 	for name, container := range containers {
+		if name == funnelContainerName(AppConfig{Name: appName}) {
+			continue
+		}
 		if strings.HasPrefix(name, appName+"-") {
 			return container, true
 		}
