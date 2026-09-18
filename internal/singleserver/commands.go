@@ -52,6 +52,8 @@ var appSettingsFlagHelp = []flagSpec{
 	{"--static-dir <dir>", "Static output directory for the generated Dockerfile"},
 	{"--app-port <port>", "Container app port for the generated Kamal config"},
 	{"--deploy-timeout <dur>", "Deploy timeout as a Go duration like 20m"},
+	{"--funnel-path <path>", "Publish this path of a private app on the internet through Tailscale Funnel; repeat for several"},
+	{"--funnel-host <name>", "Tailnet name of the funnel node (default <name>-public)"},
 }
 
 // cliCommands is the registry. Adding a command here wires up both its dispatch
@@ -161,6 +163,7 @@ var cliCommands = []*command{
 		Args:    []argSpec{{"<app>", "App name, owner/repo, or GitHub URL"}},
 		Flags: append([]flagSpec{
 			{"--no-healthcheck", "Clear the external healthcheck URL"},
+			{"--no-funnel", "Stop publishing paths through Tailscale Funnel"},
 			{"--dockerfile", "Use the repository Dockerfile and clear generated runtime settings"},
 		}, append(appSettingsFlagHelp, flagSpec{"--no-deploy", "Update config without deploying"})...),
 		Run: func(args []string, w io.Writer, logger *log.Logger) error {

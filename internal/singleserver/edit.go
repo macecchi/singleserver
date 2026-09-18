@@ -21,6 +21,7 @@ type editOptions struct {
 
 	dockerfile     bool
 	noHealthcheck  bool
+	noFunnel       bool
 	noDeploy       bool
 	nonInteractive bool
 }
@@ -80,6 +81,14 @@ func cliEdit(args []string, w io.Writer, logger *log.Logger) error {
 		return err
 	}
 	app = config.Apps[appIndex]
+	if err := checkFunnelHost(app, &Config{Apps: append(append([]AppConfig{}, config.Apps[:appIndex]...), config.Apps[appIndex+1:]...)}); err != nil {
+		return err
+	}
+	if opts.noFunnel && original.HasFunnel() {
+		if err := teardownFunnelFunc(original, w); err != nil {
+			return err
+		}
+	}
 	if err := writeConfigFunc(configPath, config); err != nil {
 		return err
 	}
@@ -108,6 +117,7 @@ func parseEditArgs(args []string, w io.Writer) (editOptions, error) {
 	fs.SetOutput(w)
 	fs.BoolVar(&opts.noHealthcheck, "no-healthcheck", false, "clear external healthcheck URL")
 	fs.BoolVar(&opts.dockerfile, "dockerfile", false, "use the repository Dockerfile and clear generated runtime settings")
+	fs.BoolVar(&opts.noFunnel, "no-funnel", false, "stop publishing paths through Tailscale Funnel")
 	fs.BoolVar(&opts.noDeploy, "no-deploy", false, "update config without deploying")
 
 	appPort := bindAppSettingsFlags(fs, &opts.appSettings)
@@ -133,6 +143,9 @@ func parseEditArgs(args []string, w io.Writer) (editOptions, error) {
 	if opts.noHealthcheck && opts.healthcheckSet {
 		return editOptions{}, errors.New("--healthcheck and --no-healthcheck cannot be used together")
 	}
+	if opts.noFunnel && (opts.funnelPathsSet || opts.funnelHostSet) {
+		return editOptions{}, errors.New("--funnel-path/--funnel-host and --no-funnel cannot be used together")
+	}
 	return opts, nil
 }
 
@@ -151,11 +164,14 @@ func (o editOptions) hasSettingFlags() bool {
 		o.buildSet ||
 		o.startSet ||
 		o.staticDirSet ||
-		o.appPortSet
+		o.appPortSet ||
+		o.funnelPathsSet ||
+		o.funnelHostSet ||
+		o.noFunnel
 }
 
 func applyEditOptions(app AppConfig, opts editOptions) (AppConfig, error) {
-	return applyAppSettings(app, opts.appSettings, opts.dockerfile, opts.noHealthcheck)
+	return applyAppSettings(app, opts.appSettings, opts.dockerfile, opts.noHealthcheck, opts.noFunnel)
 }
 
 func inspectEditRepo(app AppConfig) (editPromptContext, error) {
@@ -230,6 +246,12 @@ func promptEditOptions(app AppConfig, opts editOptions, input io.Reader, w io.Wr
 		opts.healthcheckSet = true
 	}
 
+	if app.IsPrivate() {
+		if err := promptEditFunnelOptions(app, &opts, p); err != nil {
+			return editOptions{}, err
+		}
+	}
+
 	deploy, err := p.askYesNo("Deploy now?", true)
 	if err != nil {
 		return editOptions{}, err
@@ -238,6 +260,40 @@ func promptEditOptions(app AppConfig, opts editOptions, input io.Reader, w io.Wr
 
 	fmt.Fprintf(w, "Equivalent command:\n  %s\n", editEquivalentCommand(app.Name, opts))
 	return opts, nil
+}
+
+func promptEditFunnelOptions(app AppConfig, opts *editOptions, p addPrompter) error {
+	current := ""
+	if app.HasFunnel() {
+		current = strings.Join(app.Funnel.Paths, ",")
+	}
+	paths, cleared, err := p.askOptionalEdit("Public paths through Tailscale Funnel (comma-separated)", current)
+	if err != nil {
+		return err
+	}
+	if cleared {
+		opts.noFunnel = true
+		return nil
+	}
+	if strings.TrimSpace(paths) == "" {
+		return nil
+	}
+	opts.funnelPaths = splitFunnelPaths(paths)
+	opts.funnelPathsSet = true
+	currentHost := ""
+	if app.Funnel != nil {
+		currentHost = app.Funnel.Host
+	}
+	if currentHost == "" {
+		currentHost = app.Name + "-public"
+	}
+	host, err := p.askDefault("Funnel node name", currentHost)
+	if err != nil {
+		return err
+	}
+	opts.funnelHost = host
+	opts.funnelHostSet = true
+	return nil
 }
 
 func promptEditBuildMode(app AppConfig, p addPrompter, ctx editPromptContext) (string, error) {
@@ -416,6 +472,9 @@ func editEquivalentCommand(appName string, opts editOptions) string {
 	parts = appendAppSettingsFlags(parts, opts.appSettings, true)
 	if opts.noHealthcheck {
 		parts = append(parts, "--no-healthcheck")
+	}
+	if opts.noFunnel {
+		parts = append(parts, "--no-funnel")
 	}
 	if opts.noDeploy {
 		parts = append(parts, "--no-deploy")

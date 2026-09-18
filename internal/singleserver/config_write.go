@@ -64,6 +64,7 @@ func appConfigEntry(app AppConfig) addAppEntry {
 		appPortSet:      app.AppPortSet || (app.AppPort != 0 && app.AppPort != 80),
 		deployTimeout:   app.DeployTimeout,
 		storage:         app.Storage,
+		funnel:          persistedFunnel(app),
 	}
 	repoName := ""
 	if parts := strings.SplitN(app.Repo, "/", 2); len(parts) == 2 {

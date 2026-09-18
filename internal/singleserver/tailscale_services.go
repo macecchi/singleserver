@@ -172,6 +172,9 @@ func promptTailscaleOAuthClient(w io.Writer) (string, string, error) {
 	fmt.Fprintln(w, "2. Machines -> this server -> Edit ACL tags: add "+tailscaleServiceTag+".")
 	fmt.Fprintln(w, "3. Settings -> Trust credentials: create an OAuth client with the Services")
 	fmt.Fprintln(w, "   write scope, tagged "+tailscaleServiceTag+". It never expires.")
+	fmt.Fprintln(w, "   To publish paths through Tailscale Funnel (--funnel-path), also give it the")
+	fmt.Fprintln(w, "   Auth Keys write scope with the same tag, and add to the policy file:")
+	fmt.Fprintf(w, "     \"nodeAttrs\": [{\"target\": [\"%s\"], \"attr\": [\"funnel\"]}]\n", tailscaleServiceTag)
 	p := interactivePrompter(w)
 	for {
 		id, err := p.askOptional("OAuth client ID (empty to skip)")
@@ -218,7 +221,7 @@ func tailscaleServiceName(app AppConfig) string {
 	return tailscaleServiceNameForHost(host, app.Name)
 }
 
-var errTailscaleOAuthMissing = errors.New("a Tailscale OAuth client (scope: services write) is required for private apps; run `singleserver connect tailscale --oauth-client-id <id> --oauth-client-secret <secret>` or set TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_OAUTH_CLIENT_SECRET")
+var errTailscaleOAuthMissing = errors.New("a Tailscale OAuth client (scopes: services write, plus auth keys write for funnel paths) is required for private apps; run `singleserver connect tailscale --oauth-client-id <id> --oauth-client-secret <secret>` or set TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_OAUTH_CLIENT_SECRET")
 
 func storeTailscaleOAuthClient(state *TailscaleState, id, secret string, w io.Writer) error {
 	state.OAuthClientID = id

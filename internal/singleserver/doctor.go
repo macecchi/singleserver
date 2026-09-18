@@ -91,6 +91,9 @@ func cliDoctor(args []string, w io.Writer) error {
 		if !doctorHealthcheck(w, app) {
 			failed = true
 		}
+		if !doctorFunnel(w, app) {
+			failed = true
+		}
 	}
 
 	if failed {

@@ -98,6 +98,15 @@ func cliRemove(args []string, w io.Writer) error {
 		removedHosts = append(removedHosts, host)
 	}
 
+	if app.HasFunnel() || funnelContainerStateFunc(app).exists {
+		if err := teardownFunnelFunc(app, w); err != nil {
+			for _, removedHost := range removedHosts {
+				_ = syncAppDomainFunc(app, removedHost, true, io.Discard)
+			}
+			return fmt.Errorf("funnel teardown failed, config left unchanged: %w", err)
+		}
+	}
+
 	config.Apps = append(config.Apps[:index], config.Apps[index+1:]...)
 	if err := writeConfig(configPath, config); err != nil {
 		for _, removedHost := range removedHosts {

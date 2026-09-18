@@ -97,6 +97,7 @@ type addAppEntry struct {
 	appPortSet      bool
 	deployTimeout   string
 	storage         *StorageConfig
+	funnel          *FunnelConfig
 }
 
 func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
@@ -174,6 +175,9 @@ func cliAdd(args []string, w io.Writer, logger *log.Logger) error {
 			return fmt.Errorf("svc:%s is already served by %s; private apps are named after the first label of their domain, so rerun with a --domain whose first label is unique", service, existing.Repo)
 		}
 		if err := ensureTailscaleServicesReady(w); err != nil {
+			return err
+		}
+		if err := checkFunnelHost(app, config); err != nil {
 			return err
 		}
 	}
@@ -357,6 +361,22 @@ func promptAddOptions(opts addOptions, input io.Reader, w io.Writer, ctx addProm
 		if value != "" {
 			opts.hosts = []string{value}
 			opts.hostsSet = true
+		}
+	}
+	if Tunnel(opts.tunnel).IsPrivate() && !opts.funnelPathsSet {
+		value, err := p.askOptional("Paths to publish on the internet through Tailscale Funnel (optional, comma-separated, e.g. /api/webhooks)")
+		if err != nil {
+			return addOptions{}, err
+		}
+		if value != "" {
+			opts.funnelPaths = splitFunnelPaths(value)
+			opts.funnelPathsSet = true
+			host, err := p.askDefault("Funnel node name", defaultFunnelLabel(opts))
+			if err != nil {
+				return addOptions{}, err
+			}
+			opts.funnelHost = host
+			opts.funnelHostSet = true
 		}
 	}
 	if !opts.healthcheckPathSet {
@@ -656,6 +676,9 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 	if o.appPortSet {
 		app.AppPort = o.appPort
 	}
+	if o.funnelPathsSet || o.funnelHostSet {
+		app.Funnel = &FunnelConfig{Host: o.funnelHost, Paths: o.funnelPaths}
+	}
 	if err := app.Normalize(); err != nil {
 		return AppConfig{}, addAppEntry{}, err
 	}
@@ -676,6 +699,7 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 		appPort:         app.AppPort,
 		appPortSet:      o.appPortSet,
 		deployTimeout:   app.DeployTimeout,
+		funnel:          persistedFunnel(app),
 	}
 	if strings.TrimSpace(o.name) != "" {
 		entry.name = app.Name
@@ -812,6 +836,18 @@ func (e addAppEntry) yamlNode() *yaml.Node {
 		}
 		appendNodePair(node, "storage", storageNode)
 	}
+	if e.funnel != nil && len(e.funnel.Paths) > 0 {
+		funnelNode := &yaml.Node{Kind: yaml.MappingNode}
+		if e.funnel.Host != "" {
+			appendScalarPair(funnelNode, "host", e.funnel.Host)
+		}
+		pathsNode := &yaml.Node{Kind: yaml.SequenceNode}
+		for _, p := range e.funnel.Paths {
+			pathsNode.Content = append(pathsNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: p})
+		}
+		appendNodePair(funnelNode, "paths", pathsNode)
+		appendNodePair(node, "funnel", funnelNode)
+	}
 	return node
 }
 
@@ -820,6 +856,7 @@ func (e addAppEntry) isScalar() bool {
 		e.branch == "" &&
 		e.repoDir == "" &&
 		len(e.hosts) == 0 &&
+		!e.tunnel.IsPrivate() &&
 		e.healthcheck == "" &&
 		e.healthcheckPath == "" &&
 		e.runtime == "" &&
@@ -829,7 +866,61 @@ func (e addAppEntry) isScalar() bool {
 		!shouldWriteStaticDir(e.runtime, e.staticDir) &&
 		!e.appPortSet &&
 		e.deployTimeout == "" &&
-		e.storage == nil
+		e.storage == nil &&
+		e.funnel == nil
+}
+
+func persistedFunnel(app AppConfig) *FunnelConfig {
+	if !app.HasFunnel() {
+		return nil
+	}
+	funnel := *app.Funnel
+	if funnel.Host == app.Name+"-public" {
+		funnel.Host = ""
+	}
+	return &funnel
+}
+
+func splitFunnelPaths(value string) []string {
+	paths := []string{}
+	for _, p := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' }) {
+		if p = strings.TrimSpace(p); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+func defaultFunnelLabel(opts addOptions) string {
+	name := strings.ToLower(strings.TrimSpace(opts.name))
+	if name == "" {
+		if _, repoName, ok := strings.Cut(opts.repo, "/"); ok {
+			name = strings.ToLower(repoName)
+		}
+	}
+	return name + "-public"
+}
+
+// The funnel node joins the same MagicDNS namespace as this server and every service on it.
+func checkFunnelHost(app AppConfig, config *Config) error {
+	if !app.HasFunnel() {
+		return nil
+	}
+	label := app.FunnelLabel()
+	if state, err := loadTailscaleState(); err == nil && state.Hostname != "" {
+		if serverLabel, _, _ := strings.Cut(strings.ToLower(state.Hostname), "."); serverLabel == label {
+			return fmt.Errorf("funnel host %s is this server's own machine name; pick another with --funnel-host", label)
+		}
+	}
+	for _, existing := range config.Apps {
+		if existing.IsPrivate() && tailscaleServiceName(existing) == label {
+			return fmt.Errorf("funnel host %s is already the name of %s; pick another with --funnel-host", label, existing.Repo)
+		}
+		if existing.HasFunnel() && existing.FunnelLabel() == label {
+			return fmt.Errorf("funnel host %s is already used by %s; pick another with --funnel-host", label, existing.Repo)
+		}
+	}
+	return nil
 }
 
 func shouldWriteStaticDir(runtime, staticDir string) bool {

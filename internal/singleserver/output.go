@@ -58,6 +58,7 @@ type AppView struct {
 	Branch string      `json:"branch,omitempty"`
 	Hosts  []string    `json:"hosts,omitempty"`
 	Tunnel Tunnel      `json:"tunnel,omitempty"`
+	Funnel string      `json:"funnel,omitempty"`
 	Commit string      `json:"commit,omitempty"`
 	State  string      `json:"state"`
 	Deploy *DeployView `json:"deploy,omitempty"`
@@ -287,6 +288,9 @@ func (o *Output) renderStatus() {
 		fmt.Fprintf(o.w, "%s %s%s%s\n", dot(wordState(a.State)), bold(a.Name), strings.Repeat(" ", nameWidth-len(a.Name)+3), dim(a.State))
 		if a.Tunnel != "" {
 			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("tunnel"), " ", a.Tunnel)
+		}
+		if a.Funnel != "" {
+			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("funnel"), " ", a.Funnel)
 		}
 		if a.Commit != "" {
 			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("commit"), " ", shortSHA(a.Commit))

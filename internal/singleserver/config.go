@@ -49,12 +49,19 @@ type AppConfig struct {
 	StaticDir       string         `yaml:"static_dir,omitempty"`
 	DeployTimeout   string         `yaml:"deploy_timeout,omitempty"`
 	Storage         *StorageConfig `yaml:"storage,omitempty"`
+	Funnel          *FunnelConfig  `yaml:"funnel,omitempty"`
 	SecretEnvKeys   []string       `yaml:"-"`
 }
 
 type StorageConfig struct {
 	Path  string `yaml:"path,omitempty"`
 	Mount string `yaml:"mount,omitempty"`
+}
+
+// Paths of a private app published to the internet through Tailscale Funnel, on their own node name.
+type FunnelConfig struct {
+	Host  string   `yaml:"host,omitempty"`
+	Paths []string `yaml:"paths"`
 }
 
 func (a *AppConfig) UnmarshalYAML(value *yaml.Node) error {
@@ -187,6 +194,56 @@ func (a *AppConfig) Normalize() error {
 			return fmt.Errorf("storage mount for %s must be absolute: %q", a.Repo, a.Storage.Mount)
 		}
 	}
+	return a.normalizeFunnel()
+}
+
+func (a *AppConfig) normalizeFunnel() error {
+	if a.Funnel == nil {
+		return nil
+	}
+	if !a.IsPrivate() {
+		return fmt.Errorf("funnel for %s requires tunnel: private; public apps are already on the internet through Cloudflare", a.Repo)
+	}
+	a.Funnel.Host = strings.ToLower(strings.TrimSpace(a.Funnel.Host))
+	if a.Funnel.Host == "" {
+		a.Funnel.Host = a.Name + "-public"
+	}
+	if strings.Contains(a.Funnel.Host, "://") || strings.Contains(a.Funnel.Host, "/") {
+		return fmt.Errorf("invalid funnel host for %s: %q", a.Repo, a.Funnel.Host)
+	}
+	if strings.Contains(a.Funnel.Host, ".") && !isTailnetHost(a.Funnel.Host) {
+		return fmt.Errorf("funnel host for %s must be a .ts.net name or a bare label, got %q", a.Repo, a.Funnel.Host)
+	}
+	if !namePattern.MatchString(a.FunnelLabel()) {
+		return fmt.Errorf("invalid funnel host for %s: %q", a.Repo, a.Funnel.Host)
+	}
+	if a.FunnelLabel() == tailscaleServiceName(*a) {
+		return fmt.Errorf("funnel host for %s must differ from the app's own name %s; the funnel is a separate node on the tailnet", a.Repo, a.FunnelLabel())
+	}
+
+	paths := make([]string, 0, len(a.Funnel.Paths))
+	seen := map[string]bool{}
+	for _, p := range a.Funnel.Paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p != "/" {
+			p = strings.TrimRight(p, "/")
+		}
+		if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "?# \t") || path.Clean(p) != p {
+			return fmt.Errorf("invalid funnel path for %s: %q (a clean absolute path with no query or spaces)", a.Repo, p)
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	if len(paths) == 0 {
+		return fmt.Errorf("funnel for %s needs at least one path", a.Repo)
+	}
+	a.Funnel.Paths = paths
 	return nil
 }
 
@@ -225,6 +282,40 @@ func (a AppConfig) QualifiedHosts() []string {
 	hosts := make([]string, len(a.Hosts))
 	for i, host := range a.Hosts {
 		hosts[i] = a.QualifiedHost(host)
+	}
+	return hosts
+}
+
+func (a AppConfig) HasFunnel() bool { return a.Funnel != nil && len(a.Funnel.Paths) > 0 }
+
+// FunnelLabel is the funnel node's machine name, the first label of its host.
+func (a AppConfig) FunnelLabel() string {
+	if a.Funnel == nil {
+		return ""
+	}
+	label, _, _ := strings.Cut(a.Funnel.Host, ".")
+	return label
+}
+
+func (a AppConfig) FunnelHost() string {
+	if a.Funnel == nil {
+		return ""
+	}
+	return a.QualifiedHost(a.Funnel.Host)
+}
+
+func (a AppConfig) FunnelURL() string {
+	if !a.HasFunnel() {
+		return ""
+	}
+	return "https://" + a.FunnelHost() + a.Funnel.Paths[0]
+}
+
+// ProxyHosts is every hostname Kamal's proxy must route to this app.
+func (a AppConfig) ProxyHosts() []string {
+	hosts := a.QualifiedHosts()
+	if a.HasFunnel() {
+		hosts = append(hosts, a.FunnelHost())
 	}
 	return hosts
 }
@@ -406,6 +497,17 @@ func (c *Config) Normalize() error {
 			}
 			seenServices[serviceKey] = c.Apps[i].Repo
 		}
+	}
+	// Funnel nodes share the MagicDNS namespace with services, so check them after every service is known.
+	for i := range c.Apps {
+		if !c.Apps[i].HasFunnel() {
+			continue
+		}
+		label := c.Apps[i].FunnelLabel()
+		if existingRepo := seenServices[label]; existingRepo != "" {
+			return fmt.Errorf("duplicate tailscale name in config: the funnel host of %s collides with %s on %s; pick another funnel host", c.Apps[i].Repo, existingRepo, label)
+		}
+		seenServices[label] = c.Apps[i].Repo
 	}
 	return nil
 }

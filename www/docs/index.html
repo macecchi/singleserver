@@ -54,6 +54,7 @@
             <a href="#commands">Commands</a>
             <a href="#config">Configuration</a>
             <a href="#private-tunnels">Private apps</a>
+            <a href="#funnel">Public paths through Funnel</a>
             <a href="#contract">The app contract</a>
             <a href="#files">Files on your server</a>
             <a href="#troubleshooting">When something breaks</a>
@@ -322,6 +323,8 @@ singleserver connect github</pre>
                     <li><code>--healthcheck &lt;url&gt;</code><span>Optional public URL checked after each deploy and by status and doctor.</span></li>
                     <li><code>--env KEY=value</code><span>Set an environment variable, stored on the server and injected at deploy. Repeat for more than one.</span></li>
                     <li><code>--deploy-timeout &lt;duration&gt;</code> <span class="opt-badge">Default: 10m</span><span>How long the deploy may run before it is killed, as a Go duration such as <code>20m</code>.</span></li>
+                    <li><code>--funnel-path &lt;path&gt;</code><span>Private apps only. Publish this path on the internet through Tailscale Funnel, on a separate node name. Repeat for more than one. See <a href="#funnel">Public paths through Funnel</a>.</span></li>
+                    <li><code>--funnel-host &lt;name&gt;</code> <span class="opt-badge">Default: &lt;name&gt;-public</span><span>Tailnet name of the funnel node, a bare label or a <code>.ts.net</code> name.</span></li>
                     <li><code>--no-deploy</code><span>Write the config but wait for the next push or a manual deploy.</span></li>
                     <li><code>--non-interactive</code><span>Never prompt. Required values must be supplied as arguments or flags.</span></li>
                 </ul>
@@ -341,6 +344,8 @@ singleserver connect github</pre>
                     <li><code>--deploy-timeout &lt;duration&gt;</code> <span class="opt-badge">Default: 10m</span><span>Raise or lower the deploy timeout for this app.</span></li>
                     <li><code>--healthcheck &lt;url&gt;</code><span>Set the optional external healthcheck URL.</span></li>
                     <li><code>--no-healthcheck</code><span>Clear the external healthcheck URL. The container healthcheck still runs during deploys.</span></li>
+                    <li><code>--funnel-path &lt;path&gt;</code>, <code>--funnel-host &lt;name&gt;</code><span>Set or change the paths a private app publishes through Tailscale Funnel. Passing paths replaces the list; the host is kept unless given.</span></li>
+                    <li><code>--no-funnel</code><span>Stop publishing paths. The next deploy removes the funnel node.</span></li>
                     <li><code>--no-deploy</code><span>Write the config change without applying it to the running app yet.</span></li>
                     <li><code>--non-interactive</code><span>Never open the editor. Missing settings are an error.</span></li>
                 </ul>
@@ -528,6 +533,7 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <li><strong><code>healthcheck</code></strong><span class="default">Default: absent.</span> Optional external URL checked after deploys and by status and doctor. When absent, the external check is reported as assumed rather than failed.</li>
             <li><strong><code>deploy_timeout</code></strong><span class="default">Default: 10m.</span> How long a deploy may run before it is killed and reported as failed. A Go duration such as <code>20m</code> or <code>90s</code>.</li>
             <li><strong><code>storage</code></strong><span class="default">Default: absent until enabled.</span> Persistent storage mapping, with optional <code>path</code> (host, default <code>/srv/storage/&lt;name&gt;</code>) and <code>mount</code> (container, default <code>/storage</code>).</li>
+            <li><strong><code>funnel</code></strong><span class="default">Default: absent.</span> Private apps only. <code>paths</code> to publish on the internet through Tailscale Funnel, and an optional <code>host</code> (default <code>&lt;name&gt;-public</code>) for the node that serves them. See <a href="#funnel">Public paths through Funnel</a>.</li>
         </ul>
 
         <h3 id="dockerfiles">Generated Dockerfiles</h3>
@@ -599,6 +605,21 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <li><strong>An OAuth client</strong><span class="default">Settings &rarr; Trust credentials</span> Generate an OAuth client with the <em>Services</em> write scope, tagged <code>tag:singleserver</code>. Store it with <code>singleserver connect tailscale --oauth-client-id &lt;id&gt; --oauth-client-secret &lt;secret&gt;</code>. Unlike auth keys, OAuth clients never expire &mdash; this is set up once and forgotten.</li>
         </ul>
         <p>If an app comes up unreachable, the usual cause is host approval: check the admin console's Services page, or add the <code>autoApprovers</code> entry above.</p>
+
+        <h3 id="funnel">Public paths through Funnel</h3>
+        <p>Some private apps still need one door open to the internet: a webhook receiver, an OAuth callback, an MCP endpoint that a hosted agent calls. <code>--funnel-path</code> publishes only those paths through <a href="https://tailscale.com/docs/features/tailscale-funnel">Tailscale Funnel</a>, with no Cloudflare and no change to how the rest of the app is served.</p>
+        <div class="code-wrapper">
+            <pre class="code-block">singleserver add <span class="accent">https://github.com/owner/app</span> --tunnel private \
+  --funnel-path /api/webhooks --funnel-host app-hooks</pre>
+        </div>
+        <p>The app stays at <code>https://app.&lt;tailnet&gt;.ts.net</code> for your tailnet. The internet gets <code>https://app-hooks.&lt;tailnet&gt;.ts.net/api/webhooks</code>, and nothing else: every other path on that name is a 404 before it reaches your app.</p>
+        <p><strong>How it works.</strong> Funnel only publishes Tailscale <em>nodes</em>, not Services, so each funnelled app gets a small <code>tailscale/tailscale</code> container as a Kamal accessory: its own node on the tailnet, named after <code>--funnel-host</code>, tagged <code>tag:singleserver</code>, running in userspace mode with no extra privileges. Single Server writes its serve config (one mount per path, Funnel on 443), boots it through Kamal, and lists the funnel name as a second proxy host so Kamal's proxy routes it to the app container. The node's identity lives under <code>/var/lib/singleserver/funnel/&lt;app&gt;</code> and survives deploys and reboots; the container is only recreated when the paths or host change (a host change renames the same node in place), or when a deploy finds it stopped or logged out. Removing the app, or <code>edit --no-funnel</code>, logs the node out and deletes the container and its state. Tailscale keeps a logged-out machine listed until you delete it in the admin console.</p>
+        <p><strong>Two more one-time settings</strong>, on top of the private-app setup above:</p>
+        <ul class="settings-list">
+            <li><strong>Funnel for the tag</strong><span class="default">Access controls &rarr; JSON editor</span> Add <code>"nodeAttrs": [{"target": ["tag:singleserver"], "attr": ["funnel"]}]</code> so nodes carrying the tag may use Funnel.</li>
+            <li><strong>Auth Keys scope</strong><span class="default">Settings &rarr; Trust credentials</span> The stored OAuth client also needs the <em>Auth Keys</em> write scope, tagged <code>tag:singleserver</code>. Single Server mints a single-use, one-hour, pre-authorized key for each node boot; the OAuth secret itself never reaches a container. Recreate the client with both scopes and store it again with <code>singleserver connect tailscale --oauth-client-id ... --oauth-client-secret ...</code>.</li>
+        </ul>
+        <p><code>status</code> shows each app's funnel URL, and <code>doctor</code> checks the container, the node's login state, public DNS, and an HTTPS round trip through the Funnel edge. A brand-new node can take a minute to get its certificate.</p>
     </section>
 
     <section id="contract">
@@ -655,7 +676,7 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             </tr>
             <tr>
                 <td>/etc/singleserver/tailscale.json</td>
-                <td>Tailscale hostname, Funnel URL, and the tailnet OAuth client for private app services.</td>
+                <td>Tailscale hostname, Funnel URL, and the tailnet OAuth client for private app services and funnel nodes.</td>
             </tr>
             <tr>
                 <td>/etc/singleserver/cloudflare.json</td>
@@ -672,6 +693,10 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <tr>
                 <td>/srv/storage/&lt;app&gt;</td>
                 <td>Persistent app storage, mounted into the container.</td>
+            </tr>
+            <tr>
+                <td>/var/lib/singleserver/funnel/&lt;app&gt;</td>
+                <td>Funnel node identity and serve config for private apps that publish paths.</td>
             </tr>
             <tr>
                 <td>/srv/backups/&lt;app&gt;</td>

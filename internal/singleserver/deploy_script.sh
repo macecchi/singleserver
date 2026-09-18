@@ -103,13 +103,34 @@ if [ -f "$env_file" ]; then
 else
   rm -f .kamal/secrets
 fi
+if [ -n "${SINGLESERVER_FUNNEL_BOOT:-}" ]; then
+  touch .kamal/secrets
+  chmod 600 .kamal/secrets
+  printf '\nTS_AUTHKEY=$SINGLESERVER_FUNNEL_AUTHKEY\n' >> .kamal/secrets
+fi
 
-if docker ps -a --format '{{.Names}}' | grep -Eq "^${app_name}-"; then
+funnel_container="${app_name}-funnel"
+if docker ps -a --format '{{.Names}}' | grep -E "^${app_name}-" | grep -vqx "$funnel_container"; then
   kamal_command=redeploy
 else
   kamal_command=setup
+  if docker ps -a --format '{{.Names}}' | grep -qx "$funnel_container"; then
+    docker rm -f "$funnel_container" >/dev/null
+  fi
 fi
 
 GITHUB_SHA="$sha" kamal "$kamal_command" -q
+
+if [ "${SINGLESERVER_FUNNEL_BOOT:-0}" = 1 ]; then
+  if [ "$kamal_command" = setup ]; then
+    echo "funnel=booted reason=${SINGLESERVER_FUNNEL_REASON:-setup}"
+  elif docker ps -a --format '{{.Names}}' | grep -qx "$funnel_container"; then
+    kamal accessory reboot funnel -q
+    echo "funnel=rebooted reason=${SINGLESERVER_FUNNEL_REASON:-}"
+  else
+    kamal accessory boot funnel -q
+    echo "funnel=booted reason=${SINGLESERVER_FUNNEL_REASON:-}"
+  fi
+fi
 end_ms=$(now_ms)
 echo "timing command=${kamal_command} config=${deploy_config_source} git_ms=$((git_done_ms - start_ms)) kamal_ms=$((end_ms - git_done_ms)) total_ms=$((end_ms - start_ms))"

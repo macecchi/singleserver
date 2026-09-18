@@ -8,17 +8,18 @@ import (
 )
 
 type kamalDeployConfig struct {
-	Service       string                 `yaml:"service"`
-	Image         string                 `yaml:"image"`
-	Servers       map[string]kamalServer `yaml:"servers"`
-	SSH           kamalSSH               `yaml:"ssh"`
-	Registry      kamalRegistry          `yaml:"registry"`
-	Builder       kamalBuilder           `yaml:"builder"`
-	Proxy         kamalProxy             `yaml:"proxy"`
-	Env           *kamalEnv              `yaml:"env,omitempty"`
-	Volumes       []string               `yaml:"volumes,omitempty"`
-	DeployTimeout int                    `yaml:"deploy_timeout"`
-	DrainTimeout  int                    `yaml:"drain_timeout"`
+	Service       string                    `yaml:"service"`
+	Image         string                    `yaml:"image"`
+	Servers       map[string]kamalServer    `yaml:"servers"`
+	SSH           kamalSSH                  `yaml:"ssh"`
+	Registry      kamalRegistry             `yaml:"registry"`
+	Builder       kamalBuilder              `yaml:"builder"`
+	Proxy         kamalProxy                `yaml:"proxy"`
+	Env           *kamalEnv                 `yaml:"env,omitempty"`
+	Volumes       []string                  `yaml:"volumes,omitempty"`
+	Accessories   map[string]kamalAccessory `yaml:"accessories,omitempty"`
+	DeployTimeout int                       `yaml:"deploy_timeout"`
+	DrainTimeout  int                       `yaml:"drain_timeout"`
 }
 
 type kamalServer struct {
@@ -105,7 +106,7 @@ func GeneratedDeployYAML(app AppConfig) ([]byte, error) {
 			Context: ".",
 		},
 		Proxy: kamalProxy{
-			Hosts:          app.QualifiedHosts(),
+			Hosts:          app.ProxyHosts(),
 			AppPort:        app.AppPort,
 			SSL:            false,
 			ForwardHeaders: true,
@@ -126,6 +127,13 @@ func GeneratedDeployYAML(app AppConfig) ([]byte, error) {
 	}
 	if app.Storage != nil {
 		config.Volumes = []string{app.Storage.Path + ":" + app.Storage.Mount}
+	}
+	if app.HasFunnel() {
+		accessory, err := kamalFunnelAccessory(app)
+		if err != nil {
+			return nil, err
+		}
+		config.Accessories = map[string]kamalAccessory{funnelAccessory: accessory}
 	}
 
 	var buf bytes.Buffer
