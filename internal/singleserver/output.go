@@ -287,10 +287,10 @@ func (o *Output) renderStatus() {
 		fmt.Fprintln(o.w)
 		fmt.Fprintf(o.w, "%s %s%s%s\n", dot(wordState(a.State)), bold(a.Name), strings.Repeat(" ", nameWidth-len(a.Name)+3), dim(a.State))
 		if a.Tunnel != "" {
-			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("tunnel"), " ", a.Tunnel)
+			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("tunnel"), " ", strings.TrimRight(fmt.Sprintf("%-8s %s", a.Tunnel, appURLText(a.Hosts)), " "))
 		}
 		if a.Funnel != "" {
-			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("funnel"), " ", a.Funnel)
+			fmt.Fprintf(o.w, "    %s   %s %-8s %s\n", dim("funnel"), " ", "public", a.Funnel)
 		}
 		if a.Commit != "" {
 			fmt.Fprintf(o.w, "    %s   %s %s\n", dim("commit"), " ", shortSHA(a.Commit))
@@ -360,6 +360,17 @@ func wordState(word string) stateKind {
 	default:
 		return stateMuted
 	}
+}
+
+func appURLText(hosts []string) string {
+	if len(hosts) == 0 {
+		return ""
+	}
+	text := "https://" + hosts[0]
+	if len(hosts) > 1 {
+		text += dim(fmt.Sprintf(" +%d", len(hosts)-1))
+	}
+	return text
 }
 
 func domainCell(hosts []string) tcell {

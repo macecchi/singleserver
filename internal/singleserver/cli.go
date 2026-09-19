@@ -258,6 +258,7 @@ func cliStatus(w io.Writer) error {
 			depState, depDetail := lastDeployStatusFromJournal(app.Name, journal)
 			views = append(views, AppView{
 				Name:   app.Name,
+				Hosts:  app.QualifiedHosts(),
 				Tunnel: app.Tunnel,
 				Funnel: app.FunnelURL(),
 				Commit: deployedCommitForApp(app.Name, containers),

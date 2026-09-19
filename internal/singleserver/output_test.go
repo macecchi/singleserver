@@ -239,6 +239,28 @@ func TestOutputStatusShowsTunnelLine(t *testing.T) {
 	}
 }
 
+func TestOutputStatusShowsAppAndFunnelURLs(t *testing.T) {
+	var buf bytes.Buffer
+	o := newTextOutput(&buf)
+	o.statusReport(DaemonView{State: "ok", Apps: 1}, []AppView{{
+		Name:   "cadim",
+		State:  "running",
+		Hosts:  []string{"cadim.corp.ts.net"},
+		Tunnel: "private",
+		Funnel: "https://cadim-mcp.corp.ts.net/mcp",
+	}})
+	if err := o.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "private  https://cadim.corp.ts.net") {
+		t.Fatalf("expected the app URL on the tunnel line:\n%s", out)
+	}
+	if !strings.Contains(out, "public   https://cadim-mcp.corp.ts.net/mcp") {
+		t.Fatalf("expected the funnel URL marked public:\n%s", out)
+	}
+}
+
 func TestOutputListShowsShortCommit(t *testing.T) {
 	var buf bytes.Buffer
 	o := newTextOutput(&buf)
