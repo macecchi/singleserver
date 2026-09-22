@@ -165,6 +165,7 @@ func (o editOptions) hasSettingFlags() bool {
 		o.startSet ||
 		o.staticDirSet ||
 		o.appPortSet ||
+		o.deployTimeoutSet ||
 		o.funnelPathsSet ||
 		o.funnelHostSet ||
 		o.noFunnel
