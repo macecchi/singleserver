@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +49,8 @@ type AppConfig struct {
 	StartCommand    string         `yaml:"start,omitempty"`
 	StaticDir       string         `yaml:"static_dir,omitempty"`
 	DeployTimeout   string         `yaml:"deploy_timeout,omitempty"`
+	StopTimeout     string         `yaml:"stop_timeout,omitempty"`
+	DrainTimeout    string         `yaml:"drain_timeout,omitempty"`
 	Storage         *StorageConfig `yaml:"storage,omitempty"`
 	Funnel          *FunnelConfig  `yaml:"funnel,omitempty"`
 	SecretEnvKeys   []string       `yaml:"-"`
@@ -116,6 +119,26 @@ func (a *AppConfig) Normalize() error {
 		}
 		if parsed <= 0 {
 			return fmt.Errorf("deploy_timeout for %s must be positive: %q", a.Repo, a.DeployTimeout)
+		}
+	}
+	a.StopTimeout = strings.TrimSpace(a.StopTimeout)
+	if a.StopTimeout != "" {
+		parsed, err := strconv.Atoi(a.StopTimeout)
+		if err != nil {
+			return fmt.Errorf("invalid stop_timeout for %s: %q", a.Repo, a.StopTimeout)
+		}
+		if parsed <= 0 {
+			return fmt.Errorf("stop_timeout for %s must be positive: %q", a.Repo, a.StopTimeout)
+		}
+	}
+	a.DrainTimeout = strings.TrimSpace(a.DrainTimeout)
+	if a.DrainTimeout != "" {
+		parsed, err := strconv.Atoi(a.DrainTimeout)
+		if err != nil {
+			return fmt.Errorf("invalid drain_timeout for %s: %q", a.Repo, a.DrainTimeout)
+		}
+		if parsed <= 0 {
+			return fmt.Errorf("drain_timeout for %s must be positive: %q", a.Repo, a.DrainTimeout)
 		}
 	}
 	if a.AppPort == 0 {
@@ -254,6 +277,24 @@ func (a AppConfig) DeployTimeoutDuration() time.Duration {
 		return parsed
 	}
 	return defaultDeployTimeout
+}
+
+const defaultStopTimeout = 1
+
+func (a AppConfig) StopTimeoutSeconds() int {
+	if parsed, err := strconv.Atoi(a.StopTimeout); err == nil && parsed > 0 {
+		return parsed
+	}
+	return defaultStopTimeout
+}
+
+const defaultDrainTimeout = 1
+
+func (a AppConfig) DrainTimeoutSeconds() int {
+	if parsed, err := strconv.Atoi(a.DrainTimeout); err == nil && parsed > 0 {
+		return parsed
+	}
+	return defaultDrainTimeout
 }
 
 func reposRoot() string {

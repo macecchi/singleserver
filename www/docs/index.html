@@ -323,6 +323,8 @@ singleserver connect github</pre>
                     <li><code>--healthcheck &lt;url&gt;</code><span>Optional public URL checked after each deploy and by status and doctor.</span></li>
                     <li><code>--env KEY=value</code><span>Set an environment variable, stored on the server and injected at deploy. Repeat for more than one.</span></li>
                     <li><code>--deploy-timeout &lt;duration&gt;</code> <span class="opt-badge">Default: 10m</span><span>How long the deploy may run before it is killed, as a Go duration such as <code>20m</code>.</span></li>
+                    <li><code>--stop-timeout &lt;seconds&gt;</code> <span class="opt-badge">Default: 1</span><span>Seconds Kamal waits between SIGTERM and SIGKILL of the old container, a plain integer such as <code>10</code>.</span></li>
+                    <li><code>--drain-timeout &lt;seconds&gt;</code> <span class="opt-badge">Default: 1</span><span>Seconds kamal-proxy keeps routing in-flight requests to the old container, a plain integer such as <code>10</code>.</span></li>
                     <li><code>--funnel-path &lt;path&gt;</code><span>Private apps only. Publish this path on the internet through Tailscale Funnel, on a separate node name. Repeat for more than one. See <a href="#funnel">Public paths through Funnel</a>.</span></li>
                     <li><code>--funnel-host &lt;name&gt;</code> <span class="opt-badge">Default: &lt;name&gt;-public</span><span>Tailnet name of the funnel node, a bare label or a <code>.ts.net</code> name.</span></li>
                     <li><code>--no-deploy</code><span>Write the config but wait for the next push or a manual deploy.</span></li>
@@ -342,6 +344,8 @@ singleserver connect github</pre>
                     <li><code>--branch &lt;name&gt;</code><span>Change which branch deploys automatically.</span></li>
                     <li><code>--healthcheck-path &lt;path&gt;</code><span>Change the container healthcheck path.</span></li>
                     <li><code>--deploy-timeout &lt;duration&gt;</code> <span class="opt-badge">Default: 10m</span><span>Raise or lower the deploy timeout for this app.</span></li>
+                    <li><code>--stop-timeout &lt;seconds&gt;</code> <span class="opt-badge">Default: 1</span><span>Raise or lower the gap between SIGTERM and SIGKILL of the old container.</span></li>
+                    <li><code>--drain-timeout &lt;seconds&gt;</code> <span class="opt-badge">Default: 1</span><span>Raise or lower how long kamal-proxy keeps routing in-flight requests to the old container.</span></li>
                     <li><code>--healthcheck &lt;url&gt;</code><span>Set the optional external healthcheck URL.</span></li>
                     <li><code>--no-healthcheck</code><span>Clear the external healthcheck URL. The container healthcheck still runs during deploys.</span></li>
                     <li><code>--funnel-path &lt;path&gt;</code>, <code>--funnel-host &lt;name&gt;</code><span>Set or change the paths a private app publishes through Tailscale Funnel. Passing paths replaces the list; the host is kept unless given.</span></li>
@@ -532,6 +536,8 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <li><strong><code>healthcheck_path</code></strong><span class="default">Default: <code>/</code>, or <code>/up</code> for generated static output.</span> The path Kamal polls before flipping traffic to a new container.</li>
             <li><strong><code>healthcheck</code></strong><span class="default">Default: absent.</span> Optional external URL checked after deploys and by status and doctor. When absent, the external check is reported as assumed rather than failed.</li>
             <li><strong><code>deploy_timeout</code></strong><span class="default">Default: 10m.</span> How long a deploy may run before it is killed and reported as failed. A Go duration such as <code>20m</code> or <code>90s</code>.</li>
+            <li><strong><code>stop_timeout</code></strong><span class="default">Default: 1.</span> Seconds Kamal waits between sending SIGTERM and SIGKILL to the old container during a deploy, giving it a window to shut down gracefully. A plain integer, unlike <code>deploy_timeout</code>, such as <code>10</code>.</li>
+            <li><strong><code>drain_timeout</code></strong><span class="default">Default: 1.</span> Seconds kamal-proxy keeps routing in-flight requests to the old container before it is stopped. A plain integer such as <code>10</code>.</li>
             <li><strong><code>storage</code></strong><span class="default">Default: absent until enabled.</span> Persistent storage mapping, with optional <code>path</code> (host, default <code>/srv/storage/&lt;name&gt;</code>) and <code>mount</code> (container, default <code>/storage</code>).</li>
             <li><strong><code>funnel</code></strong><span class="default">Default: absent.</span> Private apps only. <code>paths</code> to publish on the internet through Tailscale Funnel, and an optional <code>host</code> (default <code>&lt;name&gt;-public</code>) for the node that serves them. See <a href="#funnel">Public paths through Funnel</a>.</li>
         </ul>
@@ -580,7 +586,7 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <li><strong>Builder</strong><span class="default">Local Docker builder, server architecture.</span> No cross-compilation, no remote builders.</li>
             <li><strong>Proxy</strong><span class="default"><code>ssl: false</code>, forwarded headers on, bound to loopback.</span> Cloudflare terminates TLS at the edge, and the tunnel delivers plain HTTP to Kamal's proxy, which is not reachable from the public internet.</li>
             <li><strong>Healthcheck</strong><span class="default">Poll the healthcheck path every second, 1s timeout.</span> Tight intervals keep zero-downtime swaps fast for small apps.</li>
-            <li><strong>Timeouts</strong><span class="default">Deploy 10s, drain 1s.</span> Tuned for small containers that boot fast. A repo-level <code>config/deploy.yml</code> is the escape hatch for apps that need different numbers.</li>
+            <li><strong>Timeouts</strong><span class="default">Deploy 10s, stop 1s, drain 1s.</span> Tuned for small containers that boot fast and shut down instantly. Apps that need a graceful-shutdown window can raise <code>stop_timeout</code> and <code>drain_timeout</code> in <code>apps.yml</code>; a repo-level <code>config/deploy.yml</code> is the escape hatch for everything else.</li>
         </ul>
     </section>
 

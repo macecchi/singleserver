@@ -43,6 +43,35 @@ func TestParseAddArgsAllowsFlagsAfterRepo(t *testing.T) {
 	}
 }
 
+func TestParseAddArgsAllowsStopAndDrainTimeoutAfterRepo(t *testing.T) {
+	opts, err := parseAddArgs([]string{
+		"acme/marketing-site",
+		"--stop-timeout", "10",
+		"--drain-timeout", "5",
+		"--non-interactive",
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.stopTimeoutSet || opts.stopTimeout != "10" {
+		t.Fatalf("unexpected stop timeout: set=%v value=%q", opts.stopTimeoutSet, opts.stopTimeout)
+	}
+	if !opts.drainTimeoutSet || opts.drainTimeout != "5" {
+		t.Fatalf("unexpected drain timeout: set=%v value=%q", opts.drainTimeoutSet, opts.drainTimeout)
+	}
+
+	app, entry, err := opts.app()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.StopTimeout != "10" || app.DrainTimeout != "5" {
+		t.Fatalf("unexpected app timeouts: stop=%q drain=%q", app.StopTimeout, app.DrainTimeout)
+	}
+	if entry.stopTimeout != "10" || entry.drainTimeout != "5" {
+		t.Fatalf("unexpected entry timeouts: stop=%q drain=%q", entry.stopTimeout, entry.drainTimeout)
+	}
+}
+
 func TestParseAddArgsUsageMentionsOptions(t *testing.T) {
 	_, err := parseAddArgs(nil, io.Discard)
 	if err == nil {
@@ -326,6 +355,36 @@ func TestAppendAppToConfigYAML(t *testing.T) {
 	}
 	if app.Runtime != "node" || app.InstallCommand != "npm ci" || app.BuildCommand != "npm run build" || app.StartCommand != "npm start" {
 		t.Fatalf("unexpected generated Dockerfile config: %#v", app)
+	}
+}
+
+func TestAppendAppToConfigYAMLWritesStopAndDrainTimeout(t *testing.T) {
+	updated, err := appendAppToConfigYAML(nil, addAppEntry{
+		repo:         "acme/marketing-site",
+		stopTimeout:  "10",
+		drainTimeout: "5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(updated), "stop_timeout: 10") {
+		t.Fatalf("expected unquoted stop_timeout in output:\n%s", updated)
+	}
+	if !strings.Contains(string(updated), "drain_timeout: 5") {
+		t.Fatalf("expected unquoted drain_timeout in output:\n%s", updated)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(updated, &config); err != nil {
+		t.Fatal(err)
+	}
+	app := config.Apps[0]
+	if app.StopTimeout != "10" {
+		t.Fatalf("unexpected stop_timeout: %q", app.StopTimeout)
+	}
+	if app.DrainTimeout != "5" {
+		t.Fatalf("unexpected drain_timeout: %q", app.DrainTimeout)
 	}
 }
 

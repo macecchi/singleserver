@@ -118,6 +118,56 @@ func TestGeneratedDeployYAMLOmitsEmptyProxyHosts(t *testing.T) {
 	}
 }
 
+func TestGeneratedDeployYAMLDefaultsStopAndDrainTimeout(t *testing.T) {
+	t.Setenv("SINGLESERVER_STATE_DIR", t.TempDir())
+
+	body, err := GeneratedDeployYAML(AppConfig{Repo: "acme/arcade-games"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config map[string]any
+	if err := yaml.Unmarshal(body, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["drain_timeout"] != 1 {
+		t.Fatalf("unexpected default drain_timeout: %v", config["drain_timeout"])
+	}
+	servers := config["servers"].(map[string]any)
+	web := servers["web"].(map[string]any)
+	options := web["options"].(map[string]any)
+	if options["stop-timeout"] != 1 {
+		t.Fatalf("unexpected default stop-timeout: %v", options["stop-timeout"])
+	}
+}
+
+func TestGeneratedDeployYAMLUsesConfiguredStopAndDrainTimeout(t *testing.T) {
+	t.Setenv("SINGLESERVER_STATE_DIR", t.TempDir())
+
+	body, err := GeneratedDeployYAML(AppConfig{
+		Repo:         "acme/arcade-games",
+		StopTimeout:  "10",
+		DrainTimeout: "5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config map[string]any
+	if err := yaml.Unmarshal(body, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["drain_timeout"] != 5 {
+		t.Fatalf("unexpected drain_timeout: %v", config["drain_timeout"])
+	}
+	servers := config["servers"].(map[string]any)
+	web := servers["web"].(map[string]any)
+	options := web["options"].(map[string]any)
+	if options["stop-timeout"] != 10 {
+		t.Fatalf("unexpected stop-timeout: %v", options["stop-timeout"])
+	}
+}
+
 func TestGeneratedDeployYAMLIncludesSecretsAndStorage(t *testing.T) {
 	body, err := GeneratedDeployYAML(AppConfig{
 		Repo:          "acme/scoreboard",

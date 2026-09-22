@@ -96,6 +96,8 @@ type addAppEntry struct {
 	appPort         int
 	appPortSet      bool
 	deployTimeout   string
+	stopTimeout     string
+	drainTimeout    string
 	storage         *StorageConfig
 	funnel          *FunnelConfig
 }
@@ -671,6 +673,8 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 		StartCommand:    o.startCommand,
 		StaticDir:       o.staticDir,
 		DeployTimeout:   o.deployTimeout,
+		StopTimeout:     o.stopTimeout,
+		DrainTimeout:    o.drainTimeout,
 		AppPortSet:      o.appPortSet,
 	}
 	if o.appPortSet {
@@ -699,6 +703,8 @@ func (o addOptions) app() (AppConfig, addAppEntry, error) {
 		appPort:         app.AppPort,
 		appPortSet:      o.appPortSet,
 		deployTimeout:   app.DeployTimeout,
+		stopTimeout:     app.StopTimeout,
+		drainTimeout:    app.DrainTimeout,
 		funnel:          persistedFunnel(app),
 	}
 	if strings.TrimSpace(o.name) != "" {
@@ -826,6 +832,12 @@ func (e addAppEntry) yamlNode() *yaml.Node {
 	if e.deployTimeout != "" {
 		appendScalarPair(node, "deploy_timeout", e.deployTimeout)
 	}
+	if e.stopTimeout != "" {
+		appendScalarPair(node, "stop_timeout", e.stopTimeout)
+	}
+	if e.drainTimeout != "" {
+		appendScalarPair(node, "drain_timeout", e.drainTimeout)
+	}
 	if e.storage != nil {
 		storageNode := &yaml.Node{Kind: yaml.MappingNode}
 		if e.storage.Path != "" {
@@ -866,6 +878,8 @@ func (e addAppEntry) isScalar() bool {
 		!shouldWriteStaticDir(e.runtime, e.staticDir) &&
 		!e.appPortSet &&
 		e.deployTimeout == "" &&
+		e.stopTimeout == "" &&
+		e.drainTimeout == "" &&
 		e.storage == nil &&
 		e.funnel == nil
 }

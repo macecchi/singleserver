@@ -52,6 +52,8 @@ var appSettingsFlagHelp = []flagSpec{
 	{"--static-dir <dir>", "Static output directory for the generated Dockerfile"},
 	{"--app-port <port>", "Container app port for the generated Kamal config"},
 	{"--deploy-timeout <dur>", "Deploy timeout as a Go duration like 20m"},
+	{"--stop-timeout <seconds>", "Seconds Kamal waits between SIGTERM and SIGKILL of the old container, e.g. 10"},
+	{"--drain-timeout <seconds>", "Seconds kamal-proxy keeps routing in-flight requests to the old container, e.g. 10"},
 	{"--funnel-path <path>", "Publish this path of a private app on the internet through Tailscale Funnel; repeat for several"},
 	{"--funnel-host <name>", "Tailnet name of the funnel node (default <name>-public)"},
 }

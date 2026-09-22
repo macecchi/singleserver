@@ -86,7 +86,7 @@ func GeneratedDeployYAML(app AppConfig) ([]byte, error) {
 				Hosts: []string{"127.0.0.1"},
 				Options: kamalServerOptions{
 					Init:        true,
-					StopTimeout: 1,
+					StopTimeout: app.StopTimeoutSeconds(),
 				},
 			},
 		},
@@ -120,7 +120,7 @@ func GeneratedDeployYAML(app AppConfig) ([]byte, error) {
 			},
 		},
 		DeployTimeout: 10,
-		DrainTimeout:  1,
+		DrainTimeout:  app.DrainTimeoutSeconds(),
 	}
 	if len(app.SecretEnvKeys) > 0 {
 		config.Env = &kamalEnv{Secret: app.SecretEnvKeys}
