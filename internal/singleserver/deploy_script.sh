@@ -91,8 +91,13 @@ else
   rm -f config/deploy.yml
   mkdir -p config
   generated_deploy_file=config/deploy.yml
-  printf '%s' "$SINGLESERVER_GENERATED_DEPLOY_YML" > "$generated_deploy_file"
-  deploy_config_source=generated
+  if git ls-files --error-unmatch .singleserver/deploy.yml >/dev/null 2>&1; then
+    "$SINGLESERVER_BIN" merge-deploy-config .singleserver/deploy.yml "$generated_deploy_file"
+    deploy_config_source=overlay
+  else
+    printf '%s' "$SINGLESERVER_GENERATED_DEPLOY_YML" > "$generated_deploy_file"
+    deploy_config_source=generated
+  fi
 fi
 echo "deploy_config=${deploy_config_source}"
 

@@ -451,18 +451,19 @@ func doctorDeployConfig(w io.Writer, app AppConfig) bool {
 		writeCheck(w, app.Name, "deploy_config", "failed", err.Error())
 		return false
 	}
-	if _, err := GeneratedDeployYAML(renderApp); err != nil {
+	_, source, err := deployYAMLForCheckout(renderApp)
+	if err != nil {
 		writeCheck(w, app.Name, "deploy_config", "failed", err.Error())
 		return false
 	}
 
 	if _, err := os.Stat(filepath.Join(app.RepoDir, ".git")); err == nil {
-		if err := gitRun(app.RepoDir, "ls-files", "--error-unmatch", "config/deploy.yml"); err == nil {
-			writeCheck(w, app.Name, "deploy_config", "ok", "repo config/deploy.yml")
+		if err := gitRun(app.RepoDir, "ls-files", "--error-unmatch", repoDeployConfigPath); err == nil {
+			writeCheck(w, app.Name, "deploy_config", "ok", "repo "+repoDeployConfigPath)
 			return true
 		}
 	}
-	writeCheck(w, app.Name, "deploy_config", "ok", "generated from conventions")
+	writeCheck(w, app.Name, "deploy_config", "ok", source)
 	return true
 }
 

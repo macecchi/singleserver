@@ -118,6 +118,11 @@ func (m *DeployManager) runKamal(req DeployRequest, token string) (DeployTiming,
 		return DeployTiming{}, err
 	}
 
+	executable, err := os.Executable()
+	if err != nil {
+		return DeployTiming{}, err
+	}
+
 	funnelEnv, err := prepareFunnelDeploy(req.App)
 	if err != nil {
 		return DeployTiming{}, err
@@ -144,7 +149,8 @@ func (m *DeployManager) runKamal(req DeployRequest, token string) (DeployTiming,
 		"SINGLESERVER_REPO="+req.Repo,
 		"SINGLESERVER_SHA="+req.SHA,
 		"SINGLESERVER_GITHUB_TOKEN="+token,
-		"SINGLESERVER_GENERATED_DEPLOY_YML="+string(generatedDeployYAML),
+		"SINGLESERVER_BIN="+executable,
+		generatedDeployYAMLEnv+"="+string(generatedDeployYAML),
 		"SINGLESERVER_GENERATED_DOCKERFILE="+generatedDockerfile.Dockerfile,
 		"SINGLESERVER_GENERATED_DOCKERFILE_SOURCE="+generatedDockerfile.Source,
 		"SINGLESERVER_ENV_FILE="+appEnvPath(req.App.Name),
