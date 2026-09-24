@@ -109,6 +109,9 @@ func runCLI(args []string, logger *log.Logger, stdout io.Writer) error {
 		if name == "--version" {
 			name = "version"
 		}
+		if name == mergeDeployConfigCommand {
+			return cliMergeDeployConfig(args[1:])
+		}
 		cmd := lookupCommand(name)
 		if cmd == nil {
 			return fmt.Errorf("unknown command %q", name)
@@ -482,7 +485,7 @@ func cliInspect(args []string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	body, err := GeneratedDeployYAML(renderApp)
+	body, _, err := deployYAMLForCheckout(renderApp)
 	if err != nil {
 		return err
 	}

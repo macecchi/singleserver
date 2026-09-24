@@ -195,3 +195,25 @@ func TestGeneratedDeployYAMLIncludesSecretsAndStorage(t *testing.T) {
 		t.Fatalf("unexpected volumes: %#v", volumes)
 	}
 }
+
+func TestGeneratedDeployYAMLLogsToJournaldTaggedWithAppName(t *testing.T) {
+	t.Setenv("SINGLESERVER_STATE_DIR", t.TempDir())
+
+	body, err := GeneratedDeployYAML(AppConfig{Repo: "acme/arcade-games"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config map[string]any
+	if err := yaml.Unmarshal(body, &config); err != nil {
+		t.Fatal(err)
+	}
+	logging := config["logging"].(map[string]any)
+	if logging["driver"] != "journald" {
+		t.Fatalf("unexpected logging driver: %v", logging["driver"])
+	}
+	options := logging["options"].(map[string]any)
+	if len(options) != 1 || options["tag"] != "arcade-games" {
+		t.Fatalf("unexpected logging options: %#v", options)
+	}
+}

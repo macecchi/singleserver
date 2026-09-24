@@ -579,6 +579,15 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
 
         <h3 id="kamal-defaults">Generated Kamal defaults</h3>
         <p>Repos don't need a Kamal config. If a repo tracks <code>config/deploy.yml</code>, that file wins. Otherwise Single Server writes one for the deploy and removes it after Kamal exits. <code>inspect</code> shows you exactly what it generates, and these are the defaults inside it.</p>
+        <p>To tweak the generated config without taking it over, commit <code>.singleserver/deploy.yml</code>. Single Server deep-merges it on top of the defaults: mappings merge key by key, while scalars and lists replace the generated value. It can set anything except <code>service</code>, <code>image</code>, <code>servers</code>, <code>ssh</code>, and <code>registry</code>, which Single Server owns; a deploy with an overlay that sets one of them fails. <code>inspect</code> prints the merged result and <code>doctor</code> validates it.</p>
+        <div class="code-wrapper">
+            <pre class="code-block"># .singleserver/deploy.yml
+proxy:
+  response_timeout: 60
+env:
+  clear:
+    LOG_LEVEL: info</pre>
+        </div>
         <ul class="settings-list">
             <li><strong>Service and image</strong><span class="default">The app name.</span> One name everywhere makes containers, images, and logs easy to find.</li>
             <li><strong>Server</strong><span class="default"><code>127.0.0.1</code>, via the deploy user.</span> Kamal keeps its normal SSH deploy model. It just happens to SSH into the same machine.</li>
@@ -586,7 +595,8 @@ singleserver storage disable &lt;app&gt; [--delete] [--no-deploy] [--non-interac
             <li><strong>Builder</strong><span class="default">Local Docker builder, server architecture.</span> No cross-compilation, no remote builders.</li>
             <li><strong>Proxy</strong><span class="default"><code>ssl: false</code>, forwarded headers on, bound to loopback.</span> Cloudflare terminates TLS at the edge, and the tunnel delivers plain HTTP to Kamal's proxy, which is not reachable from the public internet.</li>
             <li><strong>Healthcheck</strong><span class="default">Poll the healthcheck path every second, 1s timeout.</span> Tight intervals keep zero-downtime swaps fast for small apps.</li>
-            <li><strong>Timeouts</strong><span class="default">Deploy 10s, stop 1s, drain 1s.</span> Tuned for small containers that boot fast and shut down instantly. Apps that need a graceful-shutdown window can raise <code>stop_timeout</code> and <code>drain_timeout</code> in <code>apps.yml</code>; a repo-level <code>config/deploy.yml</code> is the escape hatch for everything else.</li>
+            <li><strong>Logging</strong><span class="default">journald, tagged with the app name.</span> Container output lands in the system journal, so <code>journalctl -t &lt;app&gt;</code> follows an app across container versions, and <code>docker logs</code> keeps working.</li>
+            <li><strong>Timeouts</strong><span class="default">Deploy 10s, stop 1s, drain 1s.</span> Tuned for small containers that boot fast and shut down instantly. Apps that need a graceful-shutdown window can raise <code>stop_timeout</code> and <code>drain_timeout</code> in <code>apps.yml</code>; a <code>.singleserver/deploy.yml</code> overlay covers everything else.</li>
         </ul>
     </section>
 
