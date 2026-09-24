@@ -18,6 +18,7 @@ type kamalDeployConfig struct {
 	Env           *kamalEnv                 `yaml:"env,omitempty"`
 	Volumes       []string                  `yaml:"volumes,omitempty"`
 	Accessories   map[string]kamalAccessory `yaml:"accessories,omitempty"`
+	Logging       kamalLogging              `yaml:"logging"`
 	DeployTimeout int                       `yaml:"deploy_timeout"`
 	DrainTimeout  int                       `yaml:"drain_timeout"`
 }
@@ -69,6 +70,15 @@ type kamalProxyHealthcheck struct {
 	Timeout  int    `yaml:"timeout"`
 }
 
+type kamalLogging struct {
+	Driver  string              `yaml:"driver"`
+	Options kamalLoggingOptions `yaml:"options"`
+}
+
+type kamalLoggingOptions struct {
+	Tag string `yaml:"tag"`
+}
+
 type kamalEnv struct {
 	Secret []string `yaml:"secret,omitempty"`
 }
@@ -118,6 +128,10 @@ func GeneratedDeployYAML(app AppConfig) ([]byte, error) {
 			Run: kamalProxyRun{
 				BindIPs: []string{"127.0.0.1"},
 			},
+		},
+		Logging: kamalLogging{
+			Driver:  "journald",
+			Options: kamalLoggingOptions{Tag: app.Name},
 		},
 		DeployTimeout: 10,
 		DrainTimeout:  app.DrainTimeoutSeconds(),

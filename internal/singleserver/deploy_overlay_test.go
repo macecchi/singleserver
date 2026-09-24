@@ -380,3 +380,18 @@ func TestMergeDeployConfigCommandWritesMergedFile(t *testing.T) {
 		t.Fatal("expected managed key to fail the merge command")
 	}
 }
+
+func TestMergeDeployOverlayOverridesDefaultLogging(t *testing.T) {
+	generated := overlayTestGenerated(t, AppConfig{Repo: "acme/scoreboard"})
+
+	config := mergeOverlayForTest(t, generated, "logging:\n  driver: json-file\n  options:\n    max-size: 10m\n")
+
+	logging := config["logging"].(map[string]any)
+	if logging["driver"] != "json-file" {
+		t.Fatalf("expected overlay driver, got %#v", logging)
+	}
+	options := logging["options"].(map[string]any)
+	if options["max-size"] != "10m" || options["tag"] != "scoreboard" {
+		t.Fatalf("expected overlay options merged over the default tag, got %#v", options)
+	}
+}

@@ -595,6 +595,7 @@ env:
             <li><strong>Builder</strong><span class="default">Local Docker builder, server architecture.</span> No cross-compilation, no remote builders.</li>
             <li><strong>Proxy</strong><span class="default"><code>ssl: false</code>, forwarded headers on, bound to loopback.</span> Cloudflare terminates TLS at the edge, and the tunnel delivers plain HTTP to Kamal's proxy, which is not reachable from the public internet.</li>
             <li><strong>Healthcheck</strong><span class="default">Poll the healthcheck path every second, 1s timeout.</span> Tight intervals keep zero-downtime swaps fast for small apps.</li>
+            <li><strong>Logging</strong><span class="default">journald, tagged with the app name.</span> Container output lands in the system journal, so <code>journalctl -t &lt;app&gt;</code> follows an app across container versions, and <code>docker logs</code> keeps working.</li>
             <li><strong>Timeouts</strong><span class="default">Deploy 10s, stop 1s, drain 1s.</span> Tuned for small containers that boot fast and shut down instantly. Apps that need a graceful-shutdown window can raise <code>stop_timeout</code> and <code>drain_timeout</code> in <code>apps.yml</code>; a <code>.singleserver/deploy.yml</code> overlay covers everything else.</li>
         </ul>
     </section>
