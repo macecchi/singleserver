@@ -59,6 +59,7 @@ func TestDrainEnableWritesConfigUnitAndStartsService(t *testing.T) {
 		"include_units: [docker.service, singleserver.service]",
 		"since_now: true",
 		`      service = if tag != "" { tag } else { "singleserver" }`,
+		`      message = if exists(fields.message) { fields.message } else { fields.msg }`,
 	} {
 		if !strings.Contains(string(config), want) {
 			t.Fatalf("vector config missing %q:\n%s", want, config)

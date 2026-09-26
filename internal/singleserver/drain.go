@@ -282,7 +282,7 @@ func indentLines(text, prefix string) string {
 }
 
 // Maps a journald entry to one OTLP log record: app containers are named by their
-// journald tag, the deploy daemon is "singleserver", and JSON lines are unpacked.
+// journald tag, the deploy daemon is "singleserver", and JSON lines (winston, pino) are unpacked.
 const vectorRemapSource = `unit = string(._SYSTEMD_UNIT) ?? ""
 tag = string(.CONTAINER_TAG) ?? ""
 if unit == "docker.service" && tag == "" { abort }
@@ -297,13 +297,17 @@ if err == null && is_object(parsed) {
   fields = object!(parsed)
   level = fields.severity || fields.level
   if is_string(level) { severity = upcase!(level) }
-  if exists(fields.message) {
-    body = if is_string(fields.message) { string!(fields.message) } else { encode_json(fields.message) }
+  if is_integer(level) {
+    n = int!(level)
+    severity = if n >= 60 { "FATAL" } else if n >= 50 { "ERROR" } else if n >= 40 { "WARN" } else if n >= 30 { "INFO" } else if n >= 20 { "DEBUG" } else { "TRACE" }
   }
-  fields = remove!(fields, ["message"])
-  fields = remove!(fields, ["severity"])
-  fields = remove!(fields, ["level"])
-  fields = remove!(fields, ["timestamp"])
+  message = if exists(fields.message) { fields.message } else { fields.msg }
+  if message != null {
+    body = if is_string(message) { string!(message) } else { encode_json(message) }
+  }
+  for_each(["message", "msg", "severity", "level", "timestamp", "time"]) -> |_index, key| {
+    fields = remove!(fields, [key])
+  }
   for_each(fields) -> |key, value| {
     text = if is_string(value) { string!(value) } else { encode_json(value) }
     attributes = push(attributes, {"key": key, "value": {"stringValue": text}})
