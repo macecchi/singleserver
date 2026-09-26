@@ -21,18 +21,18 @@ import (
 )
 
 const (
-	vectorVersion        = "0.58.0"
-	vectorServiceName    = "vector-singleserver.service"
-	defaultDrainEndpoint = "https://us.i.posthog.com/i/v1/logs"
+	vectorVersion              = "0.58.0"
+	vectorServiceName          = "vector-singleserver.service"
+	defaultPostHogLogsEndpoint = "https://us.i.posthog.com/i/v1/logs"
 )
 
-type DrainState struct {
+type LogShipState struct {
 	Endpoint string `json:"endpoint"`
 	Token    string `json:"token"`
 }
 
-func drainStatePath() string {
-	return filepath.Join(envDefault("SINGLESERVER_STATE_DIR", "/etc/singleserver"), "drain.json")
+func logShipStatePath() string {
+	return filepath.Join(envDefault("SINGLESERVER_STATE_DIR", "/etc/singleserver"), "posthog.json")
 }
 
 func vectorConfigPath() string {
@@ -51,52 +51,40 @@ func vectorUnitPath() string {
 	return filepath.Join(envDefault("SINGLESERVER_SYSTEMD_DIR", "/etc/systemd/system"), vectorServiceName)
 }
 
-func loadDrainState() (*DrainState, error) {
-	body, err := os.ReadFile(drainStatePath())
+func loadLogShipState() (*LogShipState, error) {
+	body, err := os.ReadFile(logShipStatePath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	var state DrainState
+	var state LogShipState
 	if err := json.Unmarshal(body, &state); err != nil {
 		return nil, err
 	}
 	return &state, nil
 }
 
-func writeDrainState(state *DrainState) error {
+func writeLogShipState(state *LogShipState) error {
 	body, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(drainStatePath(), append(body, '\n'))
+	return writeFileAtomic(logShipStatePath(), append(body, '\n'))
 }
 
-func cliDrain(args []string, w io.Writer) error {
-	mode, args, err := commandModeFromArgs(args, drainFlagTakesValue)
+func cliPostHogConnect(args []string, w io.Writer) error {
+	mode, args, err := commandModeFromArgs(args, posthogFlagTakesValue)
 	if err != nil {
 		return err
 	}
-	if len(args) == 0 {
-		return cliDrainStatus(w)
-	}
 	return withCLIMode(mode, func() error {
-		switch args[0] {
-		case "enable":
-			return cliDrainEnable(args[1:], w)
-		case "disable":
-			return cliDrainDisable(args[1:], w)
-		case "status":
-			return cliDrainStatus(w)
-		default:
-			return fmt.Errorf("unknown drain command %q", args[0])
-		}
+		return connectPostHog(args, w)
 	})
 }
 
-func drainFlagTakesValue(arg string) bool {
+func posthogFlagTakesValue(arg string) bool {
 	name := strings.TrimLeft(arg, "-")
 	if before, _, ok := strings.Cut(name, "="); ok {
 		name = before
@@ -104,23 +92,29 @@ func drainFlagTakesValue(arg string) bool {
 	return name == "token" || name == "endpoint"
 }
 
-func cliDrainEnable(args []string, w io.Writer) error {
-	fs := flag.NewFlagSet("drain enable", flag.ContinueOnError)
+const posthogConnectUsage = "usage: singleserver connect posthog [--token <token>] [--endpoint <url>] [--disconnect]"
+
+func connectPostHog(args []string, w io.Writer) error {
+	fs := flag.NewFlagSet("connect posthog", flag.ContinueOnError)
 	fs.SetOutput(w)
-	token := fs.String("token", "", "bearer token for the OTLP endpoint")
+	token := fs.String("token", "", "PostHog project token")
 	endpoint := fs.String("endpoint", "", "OTLP/HTTP logs endpoint")
-	if err := fs.Parse(normalizeFlagArgs(args, drainFlagTakesValue)); err != nil {
+	disconnect := fs.Bool("disconnect", false, "stop shipping logs and remove the config")
+	if err := fs.Parse(normalizeFlagArgs(args, posthogFlagTakesValue)); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: singleserver drain enable --token <token> [--endpoint <url>]")
+		return errors.New(posthogConnectUsage)
 	}
-	state, err := loadDrainState()
+	if *disconnect {
+		return disconnectPostHog(w)
+	}
+	state, err := loadLogShipState()
 	if err != nil {
 		return err
 	}
 	if state == nil {
-		state = &DrainState{}
+		state = &LogShipState{}
 	}
 	if value := strings.TrimSpace(*token); value != "" {
 		state.Token = value
@@ -129,10 +123,10 @@ func cliDrainEnable(args []string, w io.Writer) error {
 		state.Endpoint = value
 	}
 	if state.Endpoint == "" {
-		state.Endpoint = defaultDrainEndpoint
+		state.Endpoint = defaultPostHogLogsEndpoint
 	}
 	if state.Token == "" {
-		return errors.New("usage: singleserver drain enable --token <token> [--endpoint <url>]")
+		return errors.New(posthogConnectUsage)
 	}
 	if !strings.HasPrefix(state.Endpoint, "https://") && !strings.HasPrefix(state.Endpoint, "http://") {
 		return fmt.Errorf("--endpoint must be an http(s) URL, got %q", state.Endpoint)
@@ -141,7 +135,7 @@ func cliDrainEnable(args []string, w io.Writer) error {
 	if err := installVectorFunc(vectorBinPath()); err != nil {
 		return err
 	}
-	writeCheck(w, "drain", "vector", "ok", vectorVersion, vectorBinPath())
+	writeCheck(w, "posthog", "vector", "ok", vectorVersion, vectorBinPath())
 
 	if err := os.MkdirAll(vectorDataDir(), 0700); err != nil {
 		return err
@@ -152,9 +146,9 @@ func cliDrainEnable(args []string, w io.Writer) error {
 	if err := commandRunFunc(30*time.Second, vectorBinPath(), "validate", "--no-environment", vectorConfigPath()); err != nil {
 		return err
 	}
-	writeCheck(w, "drain", "config", "ok", vectorConfigPath())
+	writeCheck(w, "posthog", "config", "ok", vectorConfigPath())
 
-	if err := writeDrainState(state); err != nil {
+	if err := writeLogShipState(state); err != nil {
 		return err
 	}
 	if err := writeVectorService(); err != nil {
@@ -169,20 +163,17 @@ func cliDrainEnable(args []string, w io.Writer) error {
 	if err := commandRunFunc(30*time.Second, "systemctl", "restart", vectorServiceName); err != nil {
 		return err
 	}
-	writeCheck(w, "drain", "service", "ok", vectorServiceName, "shipping app and deploy logs to "+state.Endpoint)
+	writeCheck(w, "posthog", "logs", "ok", vectorServiceName, "shipping app and deploy logs to "+state.Endpoint)
 	return nil
 }
 
-func cliDrainDisable(args []string, w io.Writer) error {
-	if len(args) != 0 {
-		return errors.New("usage: singleserver drain disable")
-	}
+func disconnectPostHog(w io.Writer) error {
 	if _, err := os.Stat(vectorUnitPath()); err == nil {
 		if err := commandRunFunc(30*time.Second, "systemctl", "disable", "--now", vectorServiceName); err != nil {
 			return err
 		}
 	}
-	for _, path := range []string{vectorUnitPath(), vectorConfigPath(), drainStatePath()} {
+	for _, path := range []string{vectorUnitPath(), vectorConfigPath(), logShipStatePath()} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -190,32 +181,32 @@ func cliDrainDisable(args []string, w io.Writer) error {
 	if err := commandRunFunc(10*time.Second, "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
-	writeCheck(w, "drain", "service", "disabled", vectorServiceName)
+	writeCheck(w, "posthog", "logs", "disabled", vectorServiceName)
 	return nil
 }
 
-func cliDrainStatus(w io.Writer) error {
-	state, err := loadDrainState()
+func doctorPostHog(w io.Writer) bool {
+	state, err := loadLogShipState()
 	if err != nil {
-		return err
+		writeCheck(w, "posthog", "logs", "failed", err.Error())
+		return false
 	}
 	if state == nil {
-		writeCheck(w, "drain", "service", "disabled", "-", "run singleserver drain enable --token <token>")
-		return nil
+		writeCheck(w, "posthog", "logs", "disabled", "-", "run singleserver connect posthog --token <token> to ship logs")
+		return true
 	}
 	active, _ := commandOutputFunc(5*time.Second, "systemctl", "is-active", vectorServiceName)
-	status := "ok"
 	if strings.TrimSpace(active) != "active" {
-		status = "failed"
+		writeCheck(w, "posthog", "logs", "failed", vectorServiceName, "state="+valueOrDash(strings.TrimSpace(active)), "run singleserver connect posthog")
+		return false
 	}
-	writeCheck(w, "drain", "service", status, vectorServiceName, "state="+valueOrDash(strings.TrimSpace(active)))
-	writeCheck(w, "drain", "endpoint", "ok", state.Endpoint)
-	return nil
+	writeCheck(w, "posthog", "logs", "ok", vectorServiceName, state.Endpoint)
+	return true
 }
 
 func writeVectorService() error {
 	body := fmt.Sprintf(`[Unit]
-Description=Single Server log drain
+Description=Single Server log shipping to PostHog
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -239,8 +230,8 @@ func vectorYAMLString(value string) string {
 	return strconv.Quote(strings.ReplaceAll(value, "$", "$$"))
 }
 
-func renderVectorConfig(state *DrainState, dataDir string) string {
-	return fmt.Sprintf(`# Generated by singleserver drain enable. Changes are overwritten.
+func renderVectorConfig(state *LogShipState, dataDir string) string {
+	return fmt.Sprintf(`# Generated by singleserver connect posthog. Changes are overwritten.
 data_dir: %s
 sources:
   journal:
@@ -254,7 +245,7 @@ transforms:
     source: |
 %s
 sinks:
-  drain:
+  posthog:
     type: opentelemetry
     inputs: [otlp]
     protocol:
@@ -389,7 +380,7 @@ func vectorTarget(goarch string) (string, error) {
 	case "arm64":
 		return "aarch64-unknown-linux-musl", nil
 	default:
-		return "", fmt.Errorf("log drain does not support architecture %s", goarch)
+		return "", fmt.Errorf("log shipping does not support architecture %s", goarch)
 	}
 }
 

@@ -67,6 +67,9 @@ func cliDoctor(args []string, w io.Writer) error {
 	if !doctorCloudflare(w, config.Apps, apps) {
 		failed = true
 	}
+	if !doctorPostHog(w) {
+		failed = true
+	}
 
 	github := NewGitHubClient(envDefault("SINGLESERVER_STATE_DIR", "/etc/singleserver"))
 	if !doctorGitHubSetup(w, github, len(config.Apps), expectedGitHubWebhookURL()) {
