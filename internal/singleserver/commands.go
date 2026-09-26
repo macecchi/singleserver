@@ -74,8 +74,8 @@ var cliCommands = []*command{
 		Name:    "connect",
 		Group:   "Setup",
 		Summary: "Connect or repair a provider",
-		Usage:   "<tailscale|cloudflare|github> [options]",
-		Long:    "Connect or repair the Tailscale, Cloudflare, or GitHub integration. It is safe to rerun and repairs whatever is missing.",
+		Usage:   "<tailscale|cloudflare|github|posthog> [options]",
+		Long:    "Connect or repair the Tailscale, Cloudflare, GitHub, or PostHog integration. It is safe to rerun and repairs whatever is missing.",
 		Children: []*command{
 			{
 				Name:    "tailscale",
@@ -102,6 +102,17 @@ var cliCommands = []*command{
 				Summary: "Print the GitHub App setup URL",
 				Long:    "Ensures the base files exist and prints the URL to create and install the GitHub App, then restarts the service.",
 			},
+			{
+				Name:    "posthog",
+				Summary: "Ship app and deploy logs to PostHog Logs",
+				Usage:   "[options]",
+				Long:    "Run a Vector service that forwards every app's container logs and the deploy daemon's logs from journald to PostHog Logs, or any OTLP/HTTP logs endpoint. Each app is its own service, and JSON log lines are unpacked into body, severity, and attributes. Rerunning reuses the stored token.",
+				Flags: []flagSpec{
+					{"--token <token>", "PostHog phc_ project token (required the first time)"},
+					{"--endpoint <url>", "OTLP/HTTP logs endpoint (default " + defaultPostHogLogsEndpoint + ")"},
+					{"--disconnect", "Stop shipping logs and remove the service and config"},
+				},
+			},
 		},
 		Run: func(args []string, w io.Writer, logger *log.Logger) error {
 			if len(args) >= 1 {
@@ -112,9 +123,11 @@ var cliCommands = []*command{
 					return cliCloudflareConnect(args[1:], w)
 				case "github":
 					return cliGitHubConnect(args[1:], w)
+				case "posthog":
+					return cliPostHogConnect(args[1:], w)
 				}
 			}
-			return errors.New("usage: singleserver connect <tailscale|cloudflare|github> [options]")
+			return errors.New("usage: singleserver connect <tailscale|cloudflare|github|posthog> [options]")
 		},
 	},
 	{
@@ -255,35 +268,6 @@ var cliCommands = []*command{
 		Args:    []argSpec{{"<app>", "App name, owner/repo, or GitHub URL"}},
 		Run: func(args []string, w io.Writer, logger *log.Logger) error {
 			return cliInspect(args, w)
-		},
-	},
-	{
-		Name:    "drain",
-		Group:   "Monitoring",
-		Summary: "Ship app and deploy logs to an OTLP endpoint",
-		Usage:   "[enable|disable|status] ...",
-		Long:    "Run a Vector log drain that forwards every app's container logs and the deploy daemon's logs from journald to an OpenTelemetry (OTLP/HTTP) logs endpoint such as PostHog Logs. Each app is its own service, and JSON log lines are unpacked into body, severity, and attributes. With no subcommand it prints the drain status.",
-		Children: []*command{
-			{
-				Name:    "enable",
-				Summary: "Install Vector and start shipping logs",
-				Usage:   "--token <token> [--endpoint <url>]",
-				Flags: []flagSpec{
-					{"--token <token>", "Bearer token for the endpoint, like a PostHog phc_ project token"},
-					{"--endpoint <url>", "OTLP/HTTP logs endpoint (default " + defaultDrainEndpoint + ")"},
-				},
-			},
-			{
-				Name:    "disable",
-				Summary: "Stop the drain and remove its config",
-			},
-			{
-				Name:    "status",
-				Summary: "Show whether the drain is running",
-			},
-		},
-		Run: func(args []string, w io.Writer, logger *log.Logger) error {
-			return cliDrain(args, w)
 		},
 	},
 	{

@@ -217,7 +217,6 @@
                     <a href="#cmd-list">list</a>
                     <a href="#cmd-status">status</a>
                     <a href="#cmd-logs">logs</a>
-                    <a href="#cmd-drain">drain</a>
                     <a href="#cmd-inspect">inspect</a>
                     <a href="#cmd-doctor">doctor</a>
                 </div>
@@ -255,13 +254,14 @@ curl -fsSL <span class="accent">https://singleserver.com/install.sh</span> | SIN
             </div>
 
             <div class="command" id="cmd-connect">
-                <h4>Connect Tailscale, Cloudflare, or GitHub</h4>
+                <h4>Connect Tailscale, Cloudflare, GitHub, or PostHog</h4>
                 <div class="code-wrapper">
                     <pre class="code-block">singleserver connect tailscale [--auth-key &lt;key&gt;] [--hostname &lt;name&gt;] [--oauth-client-id &lt;id&gt; --oauth-client-secret &lt;secret&gt;]
 singleserver connect cloudflare [--account &lt;id&gt;] [--tunnel &lt;name&gt;]
-singleserver connect github</pre>
+singleserver connect github
+singleserver connect posthog [--token &lt;token&gt;] [--endpoint &lt;url&gt;] [--disconnect]</pre>
                 </div>
-                <p>One command wires up each outside service, and rerunning it repairs that service without touching the others. The installer runs all three for you, so you only need them again if a connection breaks or you skipped a step.</p>
+                <p>One command wires up each outside service, and rerunning it repairs that service without touching the others. The installer runs the first three for you, so you only need them again if a connection breaks or you skipped a step.</p>
                 <p><code>connect tailscale</code> brings up Tailscale, enables Tailscale SSH, and starts Tailscale Funnel for the daemon's local port. The resulting <code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net</code> URL becomes the public address GitHub uses for the setup page and webhooks.</p>
                 <ul class="option-list">
                     <li><code>--auth-key &lt;key&gt;</code><span>Use a Tailscale auth key instead of browser login. For unattended installs, make it a tagged key so the node never expires (see below).</span></li>
@@ -277,6 +277,12 @@ singleserver connect github</pre>
                     <li><code>--non-interactive</code><span>Never prompt. Use with <code>CLOUDFLARE_API_TOKEN</code> for unattended repair.</span></li>
                 </ul>
                 <p><code>connect github</code> prints the one-time GitHub App setup URL, served by your own daemon through Tailscale Funnel. Opening it in a browser creates the GitHub App with one click and stores its credentials on the server. The app asks for the minimum it needs: repository contents read, commit statuses write, and push events. Install it on all repositories and let <code>apps.yml</code> decide what actually deploys.</p>
+                <p><code>connect posthog</code> ships logs to <a href="https://posthog.com/docs/logs">PostHog Logs</a>. It runs a <a href="https://vector.dev">Vector</a> service that forwards every app's container logs, plus the deploy daemon's, from journald. Each app shows up as its own service, and the daemon as <code>singleserver</code>. JSON log lines are unpacked: <code>message</code> or <code>msg</code> becomes the body, <code>severity</code> or <code>level</code> the severity, and the remaining keys attributes. Plain lines get their severity from the stream: stderr is an error, stdout is info. Only new lines are shipped, and apps added later ship automatically. <code>doctor</code> checks that the service is running.</p>
+                <ul class="option-list">
+                    <li><code>--token &lt;token&gt;</code><span>PostHog project token (<code>phc_…</code>). Required the first time, stored after that.</span></li>
+                    <li><code>--endpoint &lt;url&gt;</code><span>OTLP/HTTP logs endpoint. Defaults to PostHog US; use <code>https://eu.i.posthog.com/i/v1/logs</code> for EU, or any other OTLP logs backend.</span></li>
+                    <li><code>--disconnect</code><span>Stop shipping logs and remove the service, config, and stored token.</span></li>
+                </ul>
             </div>
 
             <div class="command" id="cmd-upgrade">
@@ -405,16 +411,6 @@ singleserver connect github</pre>
                     <pre class="code-block">singleserver logs [app] [--runtime] [--daemon] [--follow]</pre>
                 </div>
                 <p>Shows recent deploy logs, optionally filtered to one app. Two switches change the source: <code>--runtime</code> tails the app's container, and <code>--daemon</code> shows the full Single Server journal. Add <code>--follow</code> to stream live.</p>
-            </div>
-
-            <div class="command" id="cmd-drain">
-                <h4>Ship logs to an OTLP endpoint</h4>
-                <div class="code-wrapper">
-                    <pre class="code-block">singleserver drain enable --token &lt;token&gt; [--endpoint &lt;url&gt;]
-singleserver drain [status]
-singleserver drain disable</pre>
-                </div>
-                <p>Runs a <a href="https://vector.dev">Vector</a> service that forwards every app's container logs, plus the deploy daemon's, from journald to an OpenTelemetry logs endpoint. The default is PostHog Logs (US), with a <code>phc_</code> project token. Each app shows up as its own service, and JSON log lines are unpacked: <code>message</code> becomes the body, <code>severity</code> or <code>level</code> the severity, and the remaining keys attributes. Plain lines get their severity from the stream: stderr is an error, stdout is info. Only new lines are shipped. Apps added later ship automatically.</p>
             </div>
 
             <div class="command" id="cmd-inspect">

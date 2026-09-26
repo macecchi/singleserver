@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func setupDrainTest(t *testing.T) (string, *[]string) {
+func setupPostHogTest(t *testing.T) (string, *[]string) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("SINGLESERVER_STATE_DIR", filepath.Join(dir, "state"))
@@ -41,10 +41,10 @@ func setupDrainTest(t *testing.T) (string, *[]string) {
 	return dir, &calls
 }
 
-func TestDrainEnableWritesConfigUnitAndStartsService(t *testing.T) {
-	dir, calls := setupDrainTest(t)
+func TestConnectPostHogWritesConfigUnitAndStartsService(t *testing.T) {
+	dir, calls := setupPostHogTest(t)
 	var out bytes.Buffer
-	if err := cliDrain([]string{"enable", "--token", "phc_test"}, &out); err != nil {
+	if err := cliPostHogConnect([]string{"--token", "phc_test"}, &out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,31 +88,31 @@ func TestDrainEnableWritesConfigUnitAndStartsService(t *testing.T) {
 		t.Fatalf("calls = %q, want %q", *calls, wantCalls)
 	}
 
-	state, err := loadDrainState()
-	if err != nil || state == nil || state.Token != "phc_test" || state.Endpoint != defaultDrainEndpoint {
+	state, err := loadLogShipState()
+	if err != nil || state == nil || state.Token != "phc_test" || state.Endpoint != defaultPostHogLogsEndpoint {
 		t.Fatalf("unexpected state %+v %v", state, err)
 	}
 }
 
-func TestDrainEnableKeepsStoredTokenWhenOnlyEndpointChanges(t *testing.T) {
-	_, _ = setupDrainTest(t)
+func TestConnectPostHogKeepsStoredTokenWhenOnlyEndpointChanges(t *testing.T) {
+	_, _ = setupPostHogTest(t)
 	var out bytes.Buffer
-	if err := cliDrain([]string{"enable", "--token", "phc_test"}, &out); err != nil {
+	if err := cliPostHogConnect([]string{"--token", "phc_test"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := cliDrain([]string{"enable", "--endpoint", "https://eu.i.posthog.com/i/v1/logs"}, &out); err != nil {
+	if err := cliPostHogConnect([]string{"--endpoint", "https://eu.i.posthog.com/i/v1/logs"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	state, _ := loadDrainState()
+	state, _ := loadLogShipState()
 	if state.Token != "phc_test" || state.Endpoint != "https://eu.i.posthog.com/i/v1/logs" {
 		t.Fatalf("unexpected state %+v", state)
 	}
 }
 
-func TestDrainEnableRequiresToken(t *testing.T) {
-	_, calls := setupDrainTest(t)
+func TestConnectPostHogRequiresToken(t *testing.T) {
+	_, calls := setupPostHogTest(t)
 	var out bytes.Buffer
-	err := cliDrain([]string{"enable"}, &out)
+	err := cliPostHogConnect(nil, &out)
 	if err == nil || !strings.Contains(err.Error(), "--token") {
 		t.Fatalf("expected token usage error, got %v", err)
 	}
@@ -121,19 +121,19 @@ func TestDrainEnableRequiresToken(t *testing.T) {
 	}
 }
 
-func TestDrainDisableRemovesTokenBearingFiles(t *testing.T) {
-	dir, calls := setupDrainTest(t)
+func TestConnectPostHogDisconnectRemovesTokenBearingFiles(t *testing.T) {
+	dir, calls := setupPostHogTest(t)
 	var out bytes.Buffer
-	if err := cliDrain([]string{"enable", "--token", "phc_test"}, &out); err != nil {
+	if err := cliPostHogConnect([]string{"--token", "phc_test"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	*calls = nil
-	if err := cliDrain([]string{"disable"}, &out); err != nil {
+	if err := cliPostHogConnect([]string{"--disconnect"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{
 		filepath.Join(dir, "state", "vector.yaml"),
-		filepath.Join(dir, "state", "drain.json"),
+		filepath.Join(dir, "state", "posthog.json"),
 		filepath.Join(dir, "systemd", vectorServiceName),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -145,14 +145,29 @@ func TestDrainDisableRemovesTokenBearingFiles(t *testing.T) {
 	}
 }
 
-func TestDrainStatusReportsDisabledWithoutState(t *testing.T) {
-	_, _ = setupDrainTest(t)
+func TestDoctorPostHogReportsDisabledWithoutState(t *testing.T) {
+	_, _ = setupPostHogTest(t)
 	var out bytes.Buffer
-	if err := cliDrain(nil, &out); err != nil {
+	if !doctorPostHog(&out) {
+		t.Fatal("a server without PostHog must not fail doctor")
+	}
+	if !strings.Contains(out.String(), "posthog\tlogs\tdisabled") {
+		t.Fatalf("unexpected doctor output %q", out.String())
+	}
+}
+
+func TestDoctorPostHogFailsWhenServiceIsDown(t *testing.T) {
+	_, _ = setupPostHogTest(t)
+	var out bytes.Buffer
+	if err := cliPostHogConnect([]string{"--token", "phc_test"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "drain\tservice\tdisabled") {
-		t.Fatalf("unexpected status output %q", out.String())
+	commandOutputFunc = func(timeout time.Duration, name string, args ...string) (string, error) {
+		return "failed", nil
+	}
+	out.Reset()
+	if doctorPostHog(&out) {
+		t.Fatalf("expected doctor failure, got %q", out.String())
 	}
 }
 
