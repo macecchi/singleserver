@@ -258,6 +258,35 @@ var cliCommands = []*command{
 		},
 	},
 	{
+		Name:    "drain",
+		Group:   "Monitoring",
+		Summary: "Ship app and deploy logs to an OTLP endpoint",
+		Usage:   "[enable|disable|status] ...",
+		Long:    "Run a Vector log drain that forwards every app's container logs and the deploy daemon's logs from journald to an OpenTelemetry (OTLP/HTTP) logs endpoint such as PostHog Logs. Each app is its own service, and JSON log lines are unpacked into body, severity, and attributes. With no subcommand it prints the drain status.",
+		Children: []*command{
+			{
+				Name:    "enable",
+				Summary: "Install Vector and start shipping logs",
+				Usage:   "--token <token> [--endpoint <url>]",
+				Flags: []flagSpec{
+					{"--token <token>", "Bearer token for the endpoint, like a PostHog phc_ project token"},
+					{"--endpoint <url>", "OTLP/HTTP logs endpoint (default " + defaultDrainEndpoint + ")"},
+				},
+			},
+			{
+				Name:    "disable",
+				Summary: "Stop the drain and remove its config",
+			},
+			{
+				Name:    "status",
+				Summary: "Show whether the drain is running",
+			},
+		},
+		Run: func(args []string, w io.Writer, logger *log.Logger) error {
+			return cliDrain(args, w)
+		},
+	},
+	{
 		Name:    "domains",
 		Group:   "Resources",
 		Summary: "Manage app domains",

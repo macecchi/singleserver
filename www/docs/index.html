@@ -217,6 +217,7 @@
                     <a href="#cmd-list">list</a>
                     <a href="#cmd-status">status</a>
                     <a href="#cmd-logs">logs</a>
+                    <a href="#cmd-drain">drain</a>
                     <a href="#cmd-inspect">inspect</a>
                     <a href="#cmd-doctor">doctor</a>
                 </div>
@@ -404,6 +405,16 @@ singleserver connect github</pre>
                     <pre class="code-block">singleserver logs [app] [--runtime] [--daemon] [--follow]</pre>
                 </div>
                 <p>Shows recent deploy logs, optionally filtered to one app. Two switches change the source: <code>--runtime</code> tails the app's container, and <code>--daemon</code> shows the full Single Server journal. Add <code>--follow</code> to stream live.</p>
+            </div>
+
+            <div class="command" id="cmd-drain">
+                <h4>Ship logs to an OTLP endpoint</h4>
+                <div class="code-wrapper">
+                    <pre class="code-block">singleserver drain enable --token &lt;token&gt; [--endpoint &lt;url&gt;]
+singleserver drain [status]
+singleserver drain disable</pre>
+                </div>
+                <p>Runs a <a href="https://vector.dev">Vector</a> service that forwards every app's container logs, plus the deploy daemon's, from journald to an OpenTelemetry logs endpoint. The default is PostHog Logs (US), with a <code>phc_</code> project token. Each app shows up as its own service, and JSON log lines are unpacked: <code>message</code> becomes the body, <code>severity</code> or <code>level</code> the severity, and the remaining keys attributes. Plain lines get their severity from the stream: stderr is an error, stdout is info. Only new lines are shipped. Apps added later ship automatically.</p>
             </div>
 
             <div class="command" id="cmd-inspect">
